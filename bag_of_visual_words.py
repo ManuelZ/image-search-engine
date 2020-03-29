@@ -18,7 +18,8 @@ from config import BATCH_SIZE
 """
 Modified from:
     - https://www.youtube.com/watch?v=PRceoMWcv1U&t=22s
-    - https://www.pyimagesearch.com/2014/12/01/complete-guide-building-image-search-engine-python-opencv/
+    - https://www.pyimagesearch.com/2014/12/01/
+    - complete-guide-building-image-search-engine-python-opencv/
     - https://gurus.pyimagesearch.com/the-bag-of-visual-words-model/
 """
 
