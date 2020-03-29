@@ -24,6 +24,10 @@ function App() {
     return <img src={`data:image/jpeg;base64,${im}`} />;
   };
 
+  /* TODO:
+  https://github.com/react-dropzone/react-dropzone
+  */
+
   return (
     <div className="App">
       <label className="font-bold">Select image</label>
