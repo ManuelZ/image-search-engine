@@ -1,12 +1,17 @@
+# Built-in imports
+from pathlib import Path
+import time
 
 # External imports
 from sklearn.cluster import MiniBatchKMeans
+from sklearn.base import TransformerMixin
 from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import NearestNeighbors
 import numpy as np
-import joblib
+import pandas as pd
 import cv2
+import joblib
 from tqdm import tqdm # Progress bars
 
 # Local imports
@@ -14,6 +19,10 @@ from config import DATA_FOLDER_PATH
 from config import SAVED_DATA_PATH
 from config import K
 from config import BATCH_SIZE
+from MyPipeline import ImagesFeatureExtractorPipeline
+from MyPipeline import DatasetGenerator
+from MyPipeline import GrayTransformer
+from MyPipeline import FeatureDetectorDescriptorTransformer
 
 """
 Modified from:
@@ -27,6 +36,7 @@ extractor = cv2.BRISK_create()
 images_paths = DATA_FOLDER_PATH.rglob('*.jpg')
 n_files = len(list(DATA_FOLDER_PATH.rglob('*.jpg')))
 
+
 def create_bag_of_descriptors(descriptors_original):
     """ 
     Stack all the given into a single Numpy array.
@@ -36,12 +46,6 @@ def create_bag_of_descriptors(descriptors_original):
     img_path, descriptors_stacked = descriptors_original[0]
 
     descriptors_stacked = np.concatenate([d[1] for d in tqdm(descriptors_original)], axis=0)
-    # for i, (img_path, des) in tqdm(enumerate(descriptors_original[1:])):
-    #     print(descriptors_stacked.shape)
-    #     try:
-    #         descriptors_stacked = np.vstack((descriptors_stacked, des))
-    #     except:
-    #         print(f"Error with image {img_path}")
     return descriptors_stacked
 
 
@@ -60,6 +64,7 @@ def  main():
 
     # TODO: Add more features, like texture features:
     # Haralick texture, Local Binary Patterns, and Gabor filters.
+    # HOG
 
     print('Extracting image features...')
     descriptors_original = []
@@ -81,7 +86,7 @@ def  main():
                              random_state=0,
                              max_iter=500,
                              batch_size=batch_size,
-                             verbose=1,
+                             verbose=0,
                              max_no_improvement=20,
                              )
     
@@ -138,9 +143,10 @@ def  main():
         values, _ = np.histogram(quantized_desc, bins=K)
         hist_features[i] = values
 
+
     # TODO: put this in a pipeline
 
-    tfidf = TfidfTransformer()
+    tfidf = TfidfTransformer(sublinear_tf=True)
     tfidf_hist_features = tfidf.fit_transform(hist_features)
 
     scaler = StandardScaler(with_mean=False)
@@ -154,7 +160,3 @@ def  main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
