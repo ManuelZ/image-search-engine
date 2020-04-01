@@ -60,25 +60,7 @@ def chi2_distance(histA, histB, eps=1e-10):
     return d
 
 
-def  main():
-
-    # TODO: Add more features, like texture features:
-    # Haralick texture, Local Binary Patterns, and Gabor filters.
-    # HOG
-
-    print('Extracting image features...')
-    descriptors_original = []
-    paths_to_images = []
-    for i, img_path in tqdm(enumerate(images_paths)):
-        image = cv2.imread(str(img_path))
-        kp, des = compute_image_descriptors(image)
-        if des is None:
-            continue
-        descriptors_original.append((img_path, des))
-        paths_to_images.append(img_path)
-
-    descriptors_stacked = create_bag_of_descriptors(descriptors_original)
-
+def create_histogram(descriptors_stacked, descriptors_original):
     # Verify a correct batch size
     batch_size = np.min([descriptors_stacked.shape[0], BATCH_SIZE])
     
@@ -134,11 +116,35 @@ def  main():
     #
     print('Building histograms...')
     hist_features = np.zeros((n_files, K))
-    for i, (im_path, img_des) in tqdm(enumerate(descriptors_original)):
+    for i, (_, img_des) in tqdm(enumerate(descriptors_original)):
+        print(kmeans.predict(img_des))
         # Translate a descriptor into a quantized descriptor
         quantized_desc = codebook[kmeans.predict(img_des)]
         values, _ = np.histogram(quantized_desc, bins=K)
         hist_features[i] = values
+    
+    return (kmeans, hist_features, codebook)
+
+
+def  main():
+
+    # TODO: Add more features, like texture features:
+    # Haralick texture, Local Binary Patterns, and Gabor filters.
+    # HOG
+
+    print('Extracting image features...')
+    descriptors_original = []
+    paths_to_images = []
+    for i, img_path in tqdm(enumerate(images_paths)):
+        image = cv2.imread(str(img_path))
+        kp, des = compute_image_descriptors(image)
+        if des is None:
+            continue
+        descriptors_original.append((img_path, des))
+        paths_to_images.append(img_path)
+
+    descriptors_stacked = create_bag_of_descriptors(descriptors_original)
+    kmeans, hist_features, codebook = create_histogram(descriptors_stacked, descriptors_original)
 
     pipeline = Pipeline([
         ('tfidf', TfidfTransformer(sublinear_tf=True)),
@@ -161,5 +167,25 @@ def  main():
     
     print("Done")
 
+
 if __name__ == "__main__":
     main()
+    #
+    # This pipeline as is, works, but adding the histogram part would require some
+    # ugly tricks. I don't think this is worth the effort.
+    # This pipeline seems to be fine to pre-process images. Nothing more.
+    # Maybe modify the output to have a list of features per image.
+    #
+    # image_paths = Path("data2").rglob("*.jpg")
+    # X_gen = DatasetGenerator(image_paths, batch_size=1000).generator()
+
+    # pipeline = ImagesFeatureExtractorPipeline([
+    #     ('to_gray', GrayTransformer()),
+    #     ('detect_features', FeatureDetectorDescriptorTransformer()),
+    # ])
+
+    # start = time.time()
+    # results = pipeline.transform(X_gen)
+    # end = time.time()
+    # print(f'Took {end - start:.1f} seconds.')
+
