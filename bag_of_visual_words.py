@@ -3,14 +3,14 @@ from pathlib import Path
 import time
 
 # External imports
-from sklearn.cluster import MiniBatchKMeans
-from sklearn.base import TransformerMixin
-from sklearn.feature_extraction.text import TfidfTransformer
-from sklearn.preprocessing import StandardScaler
-from sklearn.neighbors import NearestNeighbors
 import numpy as np
 import pandas as pd
 import cv2
+from sklearn.cluster import MiniBatchKMeans
+from sklearn.feature_extraction.text import TfidfTransformer
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import NearestNeighbors
+from sklearn.pipeline import Pipeline
 import joblib
 from tqdm import tqdm # Progress bars
 
@@ -115,19 +115,16 @@ def  main():
         
         inertia = kmeans.inertia_
         inertia_diff = old_inertia - inertia        
-
-        if i == 0:
-            tracked_inertia = inertia
-        elif (i > 0):
+        tracked_inertia = inertia if i == 0 else tracked_inertia * beta + (1 - beta) * inertia_diff
+        old_inertia = inertia
+        print(f'Inertia: {inertia/1024/1024:.0f} M')
+        print(f'Inertia diff: {inertia_diff/1024/1024:.0f} M')
+        print(f'Tracked inertia: {tracked_inertia/1024/1024:.0f} M\n')
+        
+        if (i > 0):
             if tracked_inertia < 0:
                 print("Early stopping because there is no improvement.")
                 break
-        
-        tracked_inertia = tracked_inertia * beta + (1 - beta) * inertia_diff
-        old_inertia = inertia
-        print(f'Inertia: {inertia:.0f}')
-        print(f'Inertia diff: {inertia_diff:.0f}')
-        print(f'Tracked inertia: {tracked_inertia:.0f}\n')
 
     # K x N where N is the descriptor size
     codebook = kmeans.cluster_centers_ 
@@ -143,20 +140,26 @@ def  main():
         values, _ = np.histogram(quantized_desc, bins=K)
         hist_features[i] = values
 
+    pipeline = Pipeline([
+        ('tfidf', TfidfTransformer(sublinear_tf=True)),
+        ('scaler', StandardScaler(with_mean=False)),
+    ])
+    tfidf_hist_scaled_features = pipeline.fit_transform(hist_features)
 
-    # TODO: put this in a pipeline
+    # Not used currently
+    # neighbors = NearestNeighbors(n_neighbors=5).fit(tfidf_hist_scaled_features)
 
-    tfidf = TfidfTransformer(sublinear_tf=True)
-    tfidf_hist_features = tfidf.fit_transform(hist_features)
-
-    scaler = StandardScaler(with_mean=False)
-    tfidf_hist_scaled_features = scaler.fit_transform(tfidf_hist_features)
+    joblib.dump((
+        kmeans,
+        K,
+        pipeline.named_steps['tfidf'],
+        pipeline.named_steps['scaler'],
+        # neighbors,
+        codebook,
+        tfidf_hist_scaled_features,
+        paths_to_images), str(SAVED_DATA_PATH), compress=3)
     
-    neighbors = NearestNeighbors(n_neighbors=5).fit(tfidf_hist_scaled_features)
-
-    joblib.dump((kmeans, K, tfidf, scaler, neighbors, codebook, tfidf_hist_scaled_features, paths_to_images), str(SAVED_DATA_PATH), compress=3)
     print("Done")
-
 
 if __name__ == "__main__":
     main()
