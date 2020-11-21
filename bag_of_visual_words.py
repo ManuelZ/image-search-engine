@@ -19,10 +19,7 @@ from config import DATA_FOLDER_PATH
 from config import SAVED_DATA_PATH
 from config import K
 from config import BATCH_SIZE
-from MyPipeline import ImagesFeatureExtractorPipeline
-from MyPipeline import DatasetGenerator
-from MyPipeline import GrayTransformer
-from MyPipeline import FeatureDetectorDescriptorTransformer
+
 
 """
 Modified from:
@@ -166,22 +163,3 @@ def  main():
 
 if __name__ == "__main__":
     main()
-    #
-    # This pipeline as is, works, but adding the histogram part would require some
-    # ugly tricks. I don't think this is worth the effort.
-    # This pipeline seems to be fine to pre-process images. Nothing more.
-    # Maybe modify the output to have a list of features per image.
-    #
-    # image_paths = Path("data2").rglob("*.jpg")
-    # X_gen = DatasetGenerator(image_paths, batch_size=1000).generator()
-
-    # pipeline = ImagesFeatureExtractorPipeline([
-    #     ('to_gray', GrayTransformer()),
-    #     ('detect_features', FeatureDetectorDescriptorTransformer()),
-    # ])
-
-    # start = time.time()
-    # results = pipeline.transform(X_gen)
-    # end = time.time()
-    # print(f'Took {end - start:.1f} seconds.')
-
