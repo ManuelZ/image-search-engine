@@ -27,26 +27,12 @@ from MyPipeline import FeatureDetectorDescriptorTransformer
 """
 Modified from:
     - https://www.youtube.com/watch?v=PRceoMWcv1U&t=22s
-    - https://www.pyimagesearch.com/2014/12/01/
-    - complete-guide-building-image-search-engine-python-opencv/
+    - https://www.pyimagesearch.com/2014/12/01/complete-guide-building-image-search-engine-python-opencv/
     - https://gurus.pyimagesearch.com/the-bag-of-visual-words-model/
 """
 
 extractor = cv2.BRISK_create()
-images_paths = DATA_FOLDER_PATH.rglob('*.jpg')
 n_files = len(list(DATA_FOLDER_PATH.rglob('*.jpg')))
-
-
-def create_bag_of_descriptors(descriptors_original):
-    """ 
-    Stack all the given into a single Numpy array.
-    """
-    print('Creating bag of descriptors...')
-
-    img_path, descriptors_stacked = descriptors_original[0]
-
-    descriptors_stacked = np.concatenate([d[1] for d in tqdm(descriptors_original)], axis=0)
-    return descriptors_stacked
 
 
 def compute_image_descriptors(image):
@@ -61,6 +47,9 @@ def chi2_distance(histA, histB, eps=1e-10):
 
 
 def create_histogram(descriptors_stacked, descriptors_original):
+    """
+    """
+
     # Verify a correct batch size
     batch_size = np.min([descriptors_stacked.shape[0], BATCH_SIZE])
     
@@ -116,8 +105,7 @@ def create_histogram(descriptors_stacked, descriptors_original):
     #
     print('Building histograms...')
     hist_features = np.zeros((n_files, K))
-    for i, (_, img_des) in tqdm(enumerate(descriptors_original)):
-        print(kmeans.predict(img_des))
+    for i, img_des in tqdm(enumerate(descriptors_original)):
         # Translate a descriptor into a quantized descriptor
         quantized_desc = codebook[kmeans.predict(img_des)]
         values, _ = np.histogram(quantized_desc, bins=K)
@@ -127,24 +115,32 @@ def create_histogram(descriptors_stacked, descriptors_original):
 
 
 def  main():
+    """
+    Extract image features from all the images found in `DATA_FOLDER_PATH`.
+    """
+    images_paths = DATA_FOLDER_PATH.rglob('*.jpg')
 
     # TODO: Add more features, like texture features:
     # Haralick texture, Local Binary Patterns, and Gabor filters.
     # HOG
 
     print('Extracting image features...')
-    descriptors_original = []
+    original_descriptors = []
     paths_to_images = []
     for i, img_path in tqdm(enumerate(images_paths)):
         image = cv2.imread(str(img_path))
         kp, des = compute_image_descriptors(image)
         if des is None:
             continue
-        descriptors_original.append((img_path, des))
+        original_descriptors.append(des)
         paths_to_images.append(img_path)
 
-    descriptors_stacked = create_bag_of_descriptors(descriptors_original)
-    kmeans, hist_features, codebook = create_histogram(descriptors_stacked, descriptors_original)
+    stacked_descriptors = np.concatenate(
+        [d for d in original_descriptors], axis=0
+    ) 
+    
+    kmeans, hist_features, codebook = create_histogram(
+        stacked_descriptors, original_descriptors)
 
     pipeline = Pipeline([
         ('tfidf', TfidfTransformer(sublinear_tf=True)),

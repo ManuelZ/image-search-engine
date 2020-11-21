@@ -38,7 +38,16 @@ def get_image(image_path):
     return encoded_img
 
 if SAVED_DATA_PATH.is_file():
-    (kmeans, k, tfidf, scaler, neighbors, codebook, tfidf_hist_scaled_features, paths_to_images) = joblib.load(str(SAVED_DATA_PATH))
+    (
+        kmeans,
+        k,
+        tfidf,
+        scaler,
+        # neighbors,
+        codebook,
+        tfidf_hist_scaled_features,
+        paths_to_images
+    ) = joblib.load(str(SAVED_DATA_PATH))
 
 @app.route('/similar_images', methods=['POST'])
 def predict():
@@ -67,7 +76,7 @@ def predict():
 
         # Histogram of image descriptor values
         im_feat_hist, _ = np.histogram(quantized_desc, bins=k)
-        im_feat_hist = im_feat_hist.reshape(1, -1)
+        im_feat_hist    = im_feat_hist.reshape(1, -1)
 
         # TF-IDF
         im_feat_hist_tfidf = tfidf.transform(im_feat_hist)
@@ -91,13 +100,17 @@ def predict():
         
         results = sorted([(v, k) for (k, v) in results.items()])
         results = results[:n_images]
-        results = [(r[0], get_image(r[1])) for r in results]
+        results = [(dist, get_image(path_to_im)) for (dist, path_to_im) in results]
 
         end = time.time()
 
         print(f"Took {end - start:.1f} seconds.")
 
-        return Response(response=json.dumps({'prediction': results}), status=200, mimetype="application/json")
+        return Response(
+            response=json.dumps({'prediction': results}),
+            status=200,
+            mimetype="application/json"
+        )
         
     return "nothing"
 

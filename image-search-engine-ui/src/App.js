@@ -1,32 +1,39 @@
 import React, { useState } from "react";
-import "./App.css";
 
 function App() {
   const [images, setImages] = useState([]);
 
-  const handleFileChosen = async function(file) {
+  const handleFileChosen = async function (file) {
     const formData = new FormData();
     formData.append("image", file);
 
-    let params = {
-      method: "POST",
-      body: formData
-    };
-
     const url = "http://127.0.0.1:5000/similar_images";
-    let response = await fetch(url, params);
+    let response = await fetch(url, {
+      method: "POST",
+      body: formData,
+    });
     let data = await response.json();
-    console.log(data);
     setImages(data["prediction"]);
   };
 
-  const thumbnail = im => {
-    return <img src={`data:image/jpeg;base64,${im}`} />;
+  const thumbnail = (im) => {
+    return <img alt="" src={`data:image/jpeg;base64,${im}`} />;
   };
 
   /* TODO:
   https://github.com/react-dropzone/react-dropzone
   */
+
+  let thumbnails = (
+    <div className="m-10 grid grid-cols-6 gap-4">
+      {images.map(([dist, im], i) => (
+        <div className="flex flex-col items-center" key={i}>
+          {thumbnail(im)}
+          <span className="text-center">{Math.round(dist * 100) / 100}</span>
+        </div>
+      ))}
+    </div>
+  );
 
   return (
     <div className="App">
@@ -37,14 +44,9 @@ function App() {
         name="file"
         className=""
         accept=".jpg"
-        onChange={e => handleFileChosen(e.target.files[0])}
+        onChange={(e) => handleFileChosen(e.target.files[0])}
       />
-      {images.map((pair, i) => (
-        <div key={i}>
-          {thumbnail(pair[1])}
-          <span>{pair[0]}</span>
-        </div>
-      ))}
+      {thumbnails}
     </div>
   );
 }
