@@ -38,61 +38,55 @@ def compute_image_descriptors(image):
     return kp, des
 
 
-def chi2_distance(histA, histB, eps=1e-10):
-    d = 0.5 * np.sum([((a - b) ** 2) / (a + b + eps) for (a, b) in zip(histA, histB)])
-    return d
-
-
-def create_histogram(descriptors_stacked, descriptors_original):
+def batched_kmeans(stacked_descriptors, kmeans, batch_size):
     """
+    Args:
+        stacked_descriptors
+        kmeans
+        batch_size
     """
 
-    # Verify a correct batch size
-    batch_size = np.min([descriptors_stacked.shape[0], BATCH_SIZE])
-    
-    kmeans = MiniBatchKMeans(n_clusters=K,
-                             random_state=0,
-                             max_iter=500,
-                             batch_size=batch_size,
-                             verbose=0,
-                             max_no_improvement=20,
-                             )
-    
-    # Number of iterations over the whole dataset
-    n_passes = 100
-    # Max number of consecutive passes over the whole dataset without improvement
-    max_passes_no_improvement = 3
-    # Store number of failed passes over the whole dataset
-    failed_passes = 0
     # Total number of descriptors in the whole dataset
-    n_des = descriptors_stacked.shape[0]
+    n_des = stacked_descriptors.shape[0]
+
     # Inertia of the last run
     old_inertia = 0
 
-    # 3 values average (1 / (1-beta))
-    beta = 0.6666
+    # Number of failed passes
+    failed_passes = 0
 
-    for i in range(n_passes):
-        np.random.shuffle(descriptors_stacked)
-        start = 0
+    for i in range(MAX_NUM_PASSES):
+        print(f'\nPass {i+1} over the dataset.')
+        
+        np.random.shuffle(stacked_descriptors)
+        
+        beta = 0.666 # 3 values average (1 / (1-beta))
+
         limits = np.linspace(batch_size, n_des, n_des//batch_size, dtype=int)
-        print(f'Pass {i+1} over the dataset.')
+        start = 0
         for end in tqdm(limits):
-            kmeans.partial_fit(descriptors_stacked[start:end])
+            kmeans.partial_fit(stacked_descriptors[start:end])
             start += batch_size
         
         inertia = kmeans.inertia_
-        inertia_diff = old_inertia - inertia        
-        tracked_inertia = inertia if i == 0 else tracked_inertia * beta + (1 - beta) * inertia_diff
+        inertia_diff = 0 if i == 0 else (inertia - old_inertia)
+        tracked_inertia = 0 if i == 0 else (tracked_inertia * beta + (1 - beta) * inertia_diff)
         old_inertia = inertia
         print(f'Inertia: {inertia/1024/1024:.0f} M')
         print(f'Inertia diff: {inertia_diff/1024/1024:.0f} M')
-        print(f'Tracked inertia: {tracked_inertia/1024/1024:.0f} M\n')
+        print(f'Tracked inertia: {tracked_inertia/1024/1024:.0f} M')
         
         if (i > 0):
-            if tracked_inertia < 0:
-                print("Early stopping because there is no improvement.")
+            if tracked_inertia > 0:
+                failed_passes += 1
+                print(f"Inertia is increasing, failed passes: {failed_passes}.")
+                if failed_passes > MAX_FAILED_PASSES:
+                    print(f"Stopping multiple dataset passes because there has been no improvement in {failed_passes} passes.")
+                    print(f"Finished with total inertia of {inertia/1024/1024:.0f} M")
                 break
+            else:
+                failed_passes = 0
+
 
     # K x N where N is the descriptor size
     codebook = kmeans.cluster_centers_ 
