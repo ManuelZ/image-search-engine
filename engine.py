@@ -8,6 +8,7 @@ import base64
 # External imports
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import NearestNeighbors
+from sklearn.pipeline import Pipeline
 from flask import Flask
 from flask import request
 from flask import Response
@@ -18,36 +19,47 @@ import joblib
 import numpy as np
 import cv2
 from PIL import Image
+from scipy.spatial.distance import cosine
 
 # Local imports
 from config import SAVED_DATA_PATH
+from config import THUMBNAIL_SIZE
+from config import RESIZE_WIDTH
 from bag_of_visual_words  import compute_image_descriptors
-from bag_of_visual_words import chi2_distance
-
+from bag_of_visual_words import resize
+from descriptors import ColorDescriptor
 
 app = Flask(__name__)
 CORS(app)
 
 def get_image(image_path):
-    size = 128, 128
+    size = THUMBNAIL_SIZE, THUMBNAIL_SIZE
     img = Image.open(image_path, mode='r')
     img.thumbnail(size, Image.ANTIALIAS)
     img_byte_arr = io.BytesIO()
-    img.save(img_byte_arr, format='JPEG')
+    try:
+        img.save(img_byte_arr, format='JPEG')
+    except OSError:
+        img.save(img_byte_arr, format='PNG')
     encoded_img = base64.encodebytes(img_byte_arr.getvalue()).decode('ascii')
     return encoded_img
 
-if SAVED_DATA_PATH.is_file():
+if SAVED_DATA_PATH.exists():
     (
-        kmeans,
-        k,
-        tfidf,
-        scaler,
-        # neighbors,
+        kmeans, # Trained Kmeans that is able to predict the closest cluster each sample in X belongs to.
+        n_clusters,
         codebook,
-        tfidf_hist_scaled_features,
+        scaler,
+        tfidf,
+        images_features,
         paths_to_images
     ) = joblib.load(str(SAVED_DATA_PATH))
+
+pipeline = Pipeline([
+    ('scaler', scaler),
+    ('tfidf', tfidf),
+])
+cd = ColorDescriptor((8, 12, 3))
 
 @app.route('/similar_images', methods=['POST'])
 def predict():
@@ -67,40 +79,41 @@ def predict():
 
         # Convert numpy array to image
         image = cv2.imdecode(npimg, cv2.IMREAD_UNCHANGED)
+        
+        # Resize to standard custom size
+        image = resize(image, RESIZE_WIDTH)
 
         # Compute image descriptors
-        kp, des = compute_image_descriptors(image)
+        kp, im_descriptors = compute_image_descriptors(image)
 
-        # Quantize the image descriptor
-        quantized_desc = codebook[kmeans.predict(des)]
+        # Quantize the image descriptor:
+        # Predict the closest cluster that each sample belongs to. Each value 
+        # returned by predict represents the index of the closest cluster 
+        # center in the code book.
+        clusters_idxs = kmeans.predict(im_descriptors)
+        # quantized_des = codebook[]
 
         # Histogram of image descriptor values
-        im_feat_hist, _ = np.histogram(quantized_desc, bins=k)
-        im_feat_hist    = im_feat_hist.reshape(1, -1)
+        query_im_histogram, _ = np.histogram(clusters_idxs, bins=n_clusters)
+        query_im_histogram    = query_im_histogram.reshape(1, -1)
+        query_im_histogram    = pipeline.transform(query_im_histogram)
 
-        # TF-IDF
-        im_feat_hist_tfidf = tfidf.transform(im_feat_hist)
-                
-        # Scale the histogram
-        im_scaled_feat_hist_tfidf = scaler.transform(im_feat_hist_tfidf)
-        
-        # Find the neighbors of the input
-        # distances, indices = neighbors.kneighbors(im_scaled_feat_hist, n_neighbors=n_images)
-        # results = np.array(paths_to_images)[indices[0]]
-        # results = [str(x) for x in results]
+        query_im_color_features = np.array(cd.describe(image)).reshape((1,-1))
+        query_im_features_conc = np.concatenate([
+            query_im_histogram.todense(), query_im_color_features
+        ], axis=1)
 
         results = {}
-        for i, features in enumerate(tfidf_hist_scaled_features):
+        for i, image_features in enumerate(images_features):
             # Sparse -> Matrix -> 1D array
-            histA = np.asarray(features.todense()).reshape(-1)
-            histB = np.asarray(im_scaled_feat_hist_tfidf.todense()).reshape(-1)
-
-            d = chi2_distance(histA, histB)
+            histA = np.asarray(image_features).reshape(-1)
+            histB = np.asarray(query_im_features_conc).reshape(-1)
+            d = cosine(histA, histB)
             results[str(paths_to_images[i])] = d
         
         results = sorted([(v, k) for (k, v) in results.items()])
         results = results[:n_images]
-        results = [(dist, get_image(path_to_im)) for (dist, path_to_im) in results]
+        results = [(dist, get_image(path_to_im), path_to_im) for (dist, path_to_im) in results]
 
         end = time.time()
 

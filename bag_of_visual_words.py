@@ -4,6 +4,8 @@ Bag of Visual Words with
     - HSV color features
 
 References:
+    - http://vision.stanford.edu/teaching/cs131_fall1718/files/14_BoW_bayes.pdf
+    - http://vision.stanford.edu/teaching/cs131_fall1718/files/cs131-class-notes.pdf
     - http://www.cs.cmu.edu/~16385/s15/lectures/Lecture12.pdf
     - https://www.youtube.com/watch?v=PRceoMWcv1U&t=22s
     - https://gurus.pyimagesearch.com/the-bag-of-visual-words-model/
@@ -13,6 +15,7 @@ References:
 from pathlib import Path
 import time
 import random
+import logging 
 
 # External imports
 import numpy as np
@@ -36,21 +39,24 @@ from config import MAX_NUM_CLUSTERS
 from config import NUM_CLUSTERS_TO_TEST
 from config import RESIZE_WIDTH
 from config import extractor
+from config import LOGGING_LEVEL
+from config import LOGGING_FORMAT
+from config import SILHOUETTE_SAMPLE_SIZE
+from config import SILHOUETTE_N_SAMPLES
+
+logging.basicConfig(format=LOGGING_FORMAT, level=LOGGING_LEVEL)
+
 
 images_paths = []
 for ext in EXTENSIONS:
     images_paths.extend(DATA_FOLDER_PATH.rglob(ext))
 n_files = len(images_paths)
 
-
 def resize(im, target_width, ratio=None):
     """ Resize an image to attain the target size """
-
     if not ratio:
         ratio = target_width / im.shape[1]
-
     dim = (int(target_width), int(im.shape[0] * ratio))
-
     return cv2.resize(im, dim, interpolation = cv2.INTER_LINEAR_EXACT)
 
 
@@ -68,12 +74,9 @@ def batched_kmeans(stacked_descriptors, kmeans, batch_size):
         batch_size
     """
 
-    # Total number of descriptors in the whole dataset
     n_des = stacked_descriptors.shape[0]
     
     np.random.shuffle(stacked_descriptors)
-    
-    beta = 0.666 # 3 values average (1 / (1-beta))
 
     start = 0
     limits = np.linspace(batch_size, n_des, n_des//batch_size, dtype=int)
@@ -98,25 +101,25 @@ def create_codebook(original_descriptors):
         original_descriptors: 
     """
 
-    print(f"Shape of one descriptor: {original_descriptors[0].shape}")
-
     stacked_descriptors = np.concatenate(
         [d for d in original_descriptors], axis=0
     ) 
 
-    # Adjust the batch size if the requested one is larger than the available 
-    # number of images
+    # Batch size >= number of extracted descriptors
     batch_size = np.min([stacked_descriptors.shape[0], BATCH_SIZE])
 
+    # Split the available range for the number of clusters
     range_clusters = np.arange(
         MIN_NUM_CLUSTERS,
-        MAX_NUM_CLUSTERS+1,
-        (MAX_NUM_CLUSTERS-MIN_NUM_CLUSTERS) / (NUM_CLUSTERS_TO_TEST-1),
+        MAX_NUM_CLUSTERS + 1,
+        (MAX_NUM_CLUSTERS - MIN_NUM_CLUSTERS) / (NUM_CLUSTERS_TO_TEST - 1),
         dtype=np.int
     )
 
-    silhouette_scores = []
-
+    best_clusterer        = None
+    best_n_clusters       = None
+    best_silhouette_score = -float("inf")
+    
     for n_clusters in range_clusters:
 
         kmeans = MiniBatchKMeans(
@@ -129,56 +132,43 @@ def create_codebook(original_descriptors):
             max_no_improvement = 5,
         )
 
-        # just run once if there is no need to run multiple times
         if batch_size < BATCH_SIZE:
-            print(f"Running Kmeans with {n_clusters} clusters...")
-            kmeans.partial_fit((stacked_descriptors))
-            print("Finished running Kmeans")
-
+            logging.info(f"Running Kmeans with {n_clusters} clusters...")
+            kmeans.partial_fit(stacked_descriptors)
         else:
-            print(f"Running Batch Kmeans with {n_clusters} clusters...")
+            logging.info(f"Running Batch Kmeans with {n_clusters} clusters...")
             batched_kmeans(stacked_descriptors, kmeans, batch_size)
-            print("Finished running Batch Kmeans")
+        
+        logging.info("Finished running Kmeans.")
         
         s = calculate_sampled_silhouette(kmeans, stacked_descriptors, batch_size)
 
-        silhouette_scores.append(np.mean(s))
-        print(f"Mean Silhouette score for {n_clusters} clusters: {np.mean(s):.3f} ± {np.std(s):.4f}")
-        print(f"Total inertia of {kmeans.inertia_/1024/1024:.0f} M")
-        print()
+        logging.info(f"Mean Silhouette score for {n_clusters} clusters: {np.mean(s):.3f} ± {np.std(s):.4f}")
+        logging.info(f"Total inertia of {kmeans.inertia_/1024/1024:.0f} M")
 
-    idxbest = np.argmax(silhouette_scores)
-    best_n_clusters = range_clusters[idxbest]
-
-    kmeans = MiniBatchKMeans(
-        n_clusters         = best_n_clusters,
-        random_state       = 0,
-        max_iter           = 300,
-        batch_size         = batch_size,
-        verbose            = 0,
-        max_no_improvement = 5,
-    )
-
-    # just run once if there is no need to run multiple times
-    if batch_size < BATCH_SIZE:
-        print(f"Final run of Kmeans with {best_n_clusters} clusters with Silhouette score of {silhouette_scores[idxbest]:.4f}.")
-        kmeans.partial_fit((stacked_descriptors))
-        print("Finished running Kmeans")
-
-    else:
-        print(f"Final run of Batch Kmeans with {best_n_clusters} clusters with Silhouette score of {silhouette_scores[idxbest]:.4f}.")
-        batched_kmeans(stacked_descriptors, kmeans, batch_size)
-        print("Finished running Batch Kmeans")
+        if np.mean(s) > best_silhouette_score:
+            best_clusterer        = kmeans
+            best_n_clusters       = n_clusters
+            best_silhouette_score = np.mean(s)
     
+
+    logging.info(f"Kmeans selected number of clusters: {best_n_clusters}.")
     # Coordinates of cluster centers. 
     # n_clusters x N where N is the descriptor size
-    codebook = kmeans.cluster_centers_ 
+    codebook = best_clusterer.cluster_centers_ 
     
-    return kmeans, n_clusters, codebook
+    return best_clusterer, best_n_clusters, codebook
 
 
 def calculate_sampled_silhouette(kmeans, stacked_descriptors, batch_size):
-    print(f'Calculating average Silhouette score...')
+    """
+    Calculate the Silhouette score of this KMeans trained instance in a sample
+    of observations, multiple times. 
+    """
+
+    # TODO: Predict only for the sample
+    logging.info(f'Calculating average sampled Silhouette score...')
+    
     cluster_labels = []
     n_des = stacked_descriptors.shape[0]
     limits = np.linspace(batch_size, n_des, n_des//batch_size, dtype=int)
@@ -192,18 +182,24 @@ def calculate_sampled_silhouette(kmeans, stacked_descriptors, batch_size):
 
     # Sample because calculating the Silhouette score takes too long with Brisk
     s = []
-    for _ in range(10):
-        sample_idxs = random.sample(range(stacked_descriptors.shape[0]), 5000)
-        sample_stacked_descriptors = stacked_descriptors[sample_idxs, :]
-        sample_cluster_labels = cluster_labels[sample_idxs]
-        silhouette_avg = silhouette_score(sample_stacked_descriptors, sample_cluster_labels)
+    for _ in range(SILHOUETTE_N_SAMPLES):
+        sample_idxs = random.sample(
+            range(stacked_descriptors.shape[0]),
+            SILHOUETTE_SAMPLE_SIZE
+        )
+        stacked_descriptors_sample = stacked_descriptors[sample_idxs, :]
+        cluster_labels_sample = cluster_labels[sample_idxs]
+        silhouette_avg = silhouette_score(
+            stacked_descriptors_sample,
+            cluster_labels_sample
+        )
         s.append(silhouette_avg)
     
     return s
 
 
 def extract_descriptors():
-    print(f'Extracting features from {n_files} images...')
+    logging.info(f'Extracting features from {n_files} images...')
 
     cd = ColorDescriptor((8, 12, 3))
     
@@ -211,14 +207,19 @@ def extract_descriptors():
     images_color_features = []
     for i, img_path in tqdm(enumerate(images_paths)):
         image = cv2.imread(str(img_path))
+        if image is None:
+            logging.debug("Passing from none image")
+            continue
         image = resize(image, RESIZE_WIDTH)
         kp, des = compute_image_descriptors(image)
         if des is None:
+            logging.debug("Passing from no descriptors image")
             continue
         descriptors.append(des)
         color_features = cd.describe(image)
         images_color_features.append(color_features)
-    print('Finished extracting image features.')
+        
+    logging.info("Finished extracting images' features.")
     
     return descriptors, np.array(images_color_features)
 
@@ -232,6 +233,7 @@ def  main():
     # Haralick texture, Local Binary Patterns, and Gabor filters.
     # HOG
 
+    # TODO: pass a list of feature extractors to this function
     # Step 1: Feature extraction
     # Each image will have multiple feature vectors
     descriptors, images_color_features = extract_descriptors()
@@ -241,40 +243,50 @@ def  main():
     kmeans, n_clusters, codebook = create_codebook(descriptors)
 
    # Step 3: Image modelling
-   # Each image is modelled as a histogram which tracks the frequency of each 
-   # quantized feature vector (i.e. visual word, centroid). 
-   # 1) Each feature vector of an image is quantized (i.e. for a feture vector 
-   #    look into the codebook for the closest centroid).
-   # 2) Create a histogram out of all the quantized feature vectors of the 
-   #    image.
-    hist_features = np.zeros((n_files, n_clusters))
+   # Each image is modelled as a histogram which tracks the frequency of 
+   # clusters (i.e. visual word, centroid). 
+   # 1) For each feature vector of an image, find the cluster index to which it
+   #    belongs.
+   # 2) Create a histogram where the frequency of each cluster index is tracked
+    clusters_histograms = np.zeros((len(descriptors), n_clusters))
     for i, des in enumerate(descriptors):
-        quantized_desc = codebook[kmeans.predict(des)]
-        values, _ = np.histogram(quantized_desc, bins=n_clusters)
-        hist_features[i] = values
+        clusters_idxs = kmeans.predict(des)
+        values, _ = np.histogram(clusters_idxs, bins=n_clusters)
+        clusters_histograms[i] = values
+        logging.debug(f"Information of a new image:")
+        logging.debug(f"Clusters indexes: \n{clusters_idxs}")
+        logging.debug(f"Clusters histogram: \n{clusters_histograms[i]}")
 
     pipeline = Pipeline([
-        # ('tfidf', TfidfTransformer(sublinear_tf=True)),
         ('scaler', StandardScaler(with_mean=False)),
-    ])
-    hist_features_scaled = pipeline.fit_transform(hist_features)
-    images_features = np.concatenate([hist_features_scaled, images_color_features], axis=1)
 
-    print(f"Histogram shape: {hist_features_scaled.shape}")
-    print(f"Color features shape: {images_color_features.shape}")
-    print(f"Final shape: {images_features.shape}")
+        # Transform a count matrix to a normalized tf or tf-idf representation
+        ('tfidf', TfidfTransformer(sublinear_tf=True)),
+    ])
+
+    logging.info(f"clusters_histograms: {clusters_histograms.shape}")
+    clusters_histograms_scaled = pipeline.fit_transform(clusters_histograms)
+    logging.info(f"clusters_histograms_scaled: {clusters_histograms_scaled.shape}")
+    logging.info(f"images_color_features: {images_color_features.shape}")
+
+
+    images_features = np.concatenate([clusters_histograms_scaled.todense(), images_color_features], axis=1)
+
+    logging.info(f"Histogram shape: {clusters_histograms_scaled.shape}")
+    logging.info(f"Color features shape: {images_color_features.shape}")
+    logging.info(f"Final shape: {images_features.shape}")
 
     joblib.dump((
         kmeans,
         n_clusters,
-        # pipeline.named_steps['tfidf'],
-        pipeline.named_steps['scaler'],
         codebook,
+        pipeline.named_steps['scaler'],
+        pipeline.named_steps['tfidf'],
         images_features,
         images_paths
         ), str(SAVED_DATA_PATH), compress=3)
     
-    print("Done")
+    logging.info("Done")
 
 
 if __name__ == "__main__":
