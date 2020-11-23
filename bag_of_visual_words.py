@@ -30,6 +30,7 @@ from sklearn.metrics import silhouette_score
 
 # Local imports
 from descriptors import ColorDescriptor
+from descriptors import CornerDescriptor
 from config import DATA_FOLDER_PATH
 from config import SAVED_DATA_PATH
 from config import BATCH_SIZE
@@ -38,7 +39,6 @@ from config import MIN_NUM_CLUSTERS
 from config import MAX_NUM_CLUSTERS
 from config import NUM_CLUSTERS_TO_TEST
 from config import RESIZE_WIDTH
-from config import extractor
 from config import LOGGING_LEVEL
 from config import LOGGING_FORMAT
 from config import SILHOUETTE_SAMPLE_SIZE
@@ -58,12 +58,6 @@ def resize(im, target_width, ratio=None):
         ratio = target_width / im.shape[1]
     dim = (int(target_width), int(im.shape[0] * ratio))
     return cv2.resize(im, dim, interpolation = cv2.INTER_LINEAR_EXACT)
-
-
-def compute_image_descriptors(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)    
-    kp, des = extractor.detectAndCompute(gray, None)
-    return kp, des
 
 
 def batched_kmeans(stacked_descriptors, kmeans, batch_size):
@@ -101,9 +95,7 @@ def create_codebook(original_descriptors):
         original_descriptors: 
     """
 
-    stacked_descriptors = np.concatenate(
-        [d for d in original_descriptors], axis=0
-    ) 
+    stacked_descriptors = np.concatenate(original_descriptors, axis=0) 
 
     # Batch size >= number of extracted descriptors
     batch_size = np.min([stacked_descriptors.shape[0], BATCH_SIZE])
@@ -198,31 +190,37 @@ def calculate_sampled_silhouette(kmeans, stacked_descriptors, batch_size):
     return s
 
 
-def extract_descriptors():
+
+
+def extract_descriptors(descriptors):
+    """
+    """
+
     logging.info(f'Extracting features from {n_files} images...')
 
-    cd = ColorDescriptor((8, 12, 3))
-    
-    descriptors = []
-    images_color_features = []
+    final_results = [[] for d in descriptors]
     for i, img_path in tqdm(enumerate(images_paths)):
-        image = cv2.imread(str(img_path))
-        if image is None:
-            logging.debug("Passing from none image")
-            continue
-        image = resize(image, RESIZE_WIDTH)
-        kp, des = compute_image_descriptors(image)
-        if des is None:
-            logging.debug("Passing from no descriptors image")
-            continue
-        descriptors.append(des)
-        color_features = cd.describe(image)
-        images_color_features.append(color_features)
         
-    logging.info("Finished extracting images' features.")
+        image = cv2.imread(str(img_path))
+        
+        if image is None:
+            logging.error(f"Trouble opening image '{str(img_path)}'. Skipping.")
+            continue
+        
+        image = resize(image, RESIZE_WIDTH)
+        
+        for j, descriptor in enumerate(descriptors):
+            description = descriptor.describe(image)
+            if description is None:
+                logging.debug("Passing: no descriptors obtained.")
+                continue
+            final_results[j].append(description)
     
-    return descriptors, np.array(images_color_features)
+    final_results = [np.array(l) for l in final_results]
+    logging.info("Finished extracting images' features.")
 
+    return final_results
+    
 
 def  main():
     """
@@ -230,17 +228,28 @@ def  main():
     """
 
     # TODO: Add more features, like texture features:
-    # Haralick texture, Local Binary Patterns, and Gabor filters.
+    # - Haralick texture
+    # - Local Binary Patterns
+    # - Gabor filters
+    # - sklearn.feature_extraction.image.extract_patches_2d
     # HOG
 
-    # TODO: pass a list of feature extractors to this function
+    corner_des = CornerDescriptor()
+    color_des = ColorDescriptor((8, 12, 3))
+
     # Step 1: Feature extraction
     # Each image will have multiple feature vectors
-    descriptors, images_color_features = extract_descriptors()
+    (
+        images_corner_descriptors,
+        images_color_descriptors
+    ) = extract_descriptors([corner_des, color_des])
+
+    print(f"images_corner_descriptors: {images_corner_descriptors.shape}")
+    print(f"images_color_descriptors: {images_color_descriptors.shape}")
 
     # Step 2: Vocabulary construction (clustering)
     # The cluster centroids (codebook) are the dictionary of visual words
-    kmeans, n_clusters, codebook = create_codebook(descriptors)
+    kmeans, n_clusters, codebook = create_codebook(images_corner_descriptors)
 
    # Step 3: Image modelling
    # Each image is modelled as a histogram which tracks the frequency of 
@@ -248,8 +257,8 @@ def  main():
    # 1) For each feature vector of an image, find the cluster index to which it
    #    belongs.
    # 2) Create a histogram where the frequency of each cluster index is tracked
-    clusters_histograms = np.zeros((len(descriptors), n_clusters))
-    for i, des in enumerate(descriptors):
+    clusters_histograms = np.zeros((len(images_corner_descriptors), n_clusters))
+    for i, des in enumerate(images_corner_descriptors):
         clusters_idxs = kmeans.predict(des)
         values, _ = np.histogram(clusters_idxs, bins=n_clusters)
         clusters_histograms[i] = values
@@ -269,11 +278,11 @@ def  main():
     clusters_histograms_processed = pipeline.fit_transform(clusters_histograms)
 
     images_features = np.concatenate([
-        clusters_histograms_processed.todense(), images_color_features], axis=1
+        clusters_histograms_processed.todense(), images_color_descriptors], axis=1
     )
 
     logging.info(f"Histogram shape: {clusters_histograms_processed.shape}.")
-    logging.info(f"Color features shape: {images_color_features.shape}.")
+    logging.info(f"Color features shape: {images_color_descriptors.shape}.")
     logging.info(f"Final shape of feature vector: {images_features.shape}.")
 
     joblib.dump((

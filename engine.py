@@ -25,9 +25,9 @@ from scipy.spatial.distance import cosine
 from config import SAVED_DATA_PATH
 from config import THUMBNAIL_SIZE
 from config import RESIZE_WIDTH
-from bag_of_visual_words  import compute_image_descriptors
 from bag_of_visual_words import resize
 from descriptors import ColorDescriptor
+from descriptors import CornerDescriptor
 
 app = Flask(__name__)
 CORS(app)
@@ -84,7 +84,8 @@ def predict():
         image = resize(image, RESIZE_WIDTH)
 
         # Compute image descriptors
-        kp, im_descriptors = compute_image_descriptors(image)
+        corner_des = CornerDescriptor()
+        im_descriptors = corner_des.describe(image)
 
         # Quantize the image descriptor:
         # Predict the closest cluster that each sample belongs to. Each value 

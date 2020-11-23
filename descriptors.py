@@ -1,20 +1,32 @@
-"""
-From:
-https://www.pyimagesearch.com/2014/12/01/complete-guide-building-image-search-engine-python-opencv/
 
-3D color histogram in the HSV color space with:
-- 8 bins for the Hue channel
-- 12 bins for the saturation channel
-- 3 bins for the value channel
-
-Yielding a total feature vector of dimension 8 x 12 x 3 = 288.
-"""
 
 import numpy as np
 import cv2
 import imutils
+from config import extractor
+
+class CornerDescriptor:
+    def __init__(self):
+        pass
+
+    def describe(self, image):
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)    
+        kp, des = extractor.detectAndCompute(gray, None)
+        return des
 
 class ColorDescriptor:
+	"""
+	From:
+	https://www.pyimagesearch.com/2014/12/01/complete-guide-building-image-search-engine-python-opencv/
+
+	3D color histogram in the HSV color space with:
+	- 8 bins for the Hue channel
+	- 12 bins for the saturation channel
+	- 3 bins for the value channel
+
+	Yielding a total feature vector of dimension 8 x 12 x 3 = 288.
+	"""
+
 	def __init__(self, bins):
 		# store the number of bins for the 3D histogram
 		self.bins = bins
