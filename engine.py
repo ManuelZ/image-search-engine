@@ -59,7 +59,9 @@ pipeline = Pipeline([
     ('scaler', scaler),
     ('tfidf', tfidf),
 ])
-cd = ColorDescriptor((8, 12, 3))
+
+corner_des = CornerDescriptor()
+color_des  = ColorDescriptor()
 
 @app.route('/similar_images', methods=['POST'])
 def predict():
@@ -84,7 +86,6 @@ def predict():
         image = resize(image, RESIZE_WIDTH)
 
         # Compute image descriptors
-        corner_des = CornerDescriptor()
         im_descriptors = corner_des.describe(image)
 
         # Quantize the image descriptor:
@@ -99,7 +100,7 @@ def predict():
         query_im_histogram    = query_im_histogram.reshape(1, -1)
         query_im_histogram    = pipeline.transform(query_im_histogram)
 
-        query_im_color_features = np.array(cd.describe(image)).reshape((1,-1))
+        query_im_color_features = np.array(color_des.describe(image)).reshape((1,-1))
         query_im_features_conc = np.concatenate([
             query_im_histogram.todense(), query_im_color_features
         ], axis=1)

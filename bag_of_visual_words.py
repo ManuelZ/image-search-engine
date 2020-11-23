@@ -235,7 +235,7 @@ def  main():
     # HOG
 
     corner_des = CornerDescriptor()
-    color_des = ColorDescriptor((8, 12, 3))
+    color_des = ColorDescriptor()
 
     # Step 1: Feature extraction
     # Each image will have multiple feature vectors
