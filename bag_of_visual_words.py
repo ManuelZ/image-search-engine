@@ -258,23 +258,23 @@ def  main():
         logging.debug(f"Clusters histogram: \n{clusters_histograms[i]}")
 
     pipeline = Pipeline([
+        # Without mean because using sublinear_tf in tfidf uses log, and 
+        # rescaling with mean would give negatives
         ('scaler', StandardScaler(with_mean=False)),
 
         # Transform a count matrix to a normalized tf or tf-idf representation
         ('tfidf', TfidfTransformer(sublinear_tf=True)),
     ])
 
-    logging.info(f"clusters_histograms: {clusters_histograms.shape}")
-    clusters_histograms_scaled = pipeline.fit_transform(clusters_histograms)
-    logging.info(f"clusters_histograms_scaled: {clusters_histograms_scaled.shape}")
-    logging.info(f"images_color_features: {images_color_features.shape}")
+    clusters_histograms_processed = pipeline.fit_transform(clusters_histograms)
 
+    images_features = np.concatenate([
+        clusters_histograms_processed.todense(), images_color_features], axis=1
+    )
 
-    images_features = np.concatenate([clusters_histograms_scaled.todense(), images_color_features], axis=1)
-
-    logging.info(f"Histogram shape: {clusters_histograms_scaled.shape}")
-    logging.info(f"Color features shape: {images_color_features.shape}")
-    logging.info(f"Final shape: {images_features.shape}")
+    logging.info(f"Histogram shape: {clusters_histograms_processed.shape}.")
+    logging.info(f"Color features shape: {images_color_features.shape}.")
+    logging.info(f"Final shape of feature vector: {images_features.shape}.")
 
     joblib.dump((
         kmeans,
