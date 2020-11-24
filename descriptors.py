@@ -53,7 +53,6 @@ class ColorDescriptor:
 		# To HSV color space 
 		image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-
 		(h, w) = image.shape[:2]
 		
 		# Compute the center of the image

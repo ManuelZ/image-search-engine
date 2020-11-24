@@ -86,28 +86,27 @@ def predict():
         image = resize(image, RESIZE_WIDTH)
 
         # Compute image descriptors
-        im_descriptors = corner_des.describe(image)
+        im_corner_descriptors = corner_des.describe(image)
+        im_color_descriptors  = color_des.describe(image)
 
         # Quantize the image descriptor:
         # Predict the closest cluster that each sample belongs to. Each value 
         # returned by predict represents the index of the closest cluster 
         # center in the code book.
-        clusters_idxs = kmeans.predict(im_descriptors)
-        # quantized_des = codebook[]
+        clusters_idxs = kmeans.predict(im_corner_descriptors)
 
         # Histogram of image descriptor values
         query_im_histogram, _ = np.histogram(clusters_idxs, bins=n_clusters)
         query_im_histogram    = query_im_histogram.reshape(1, -1)
         query_im_histogram    = pipeline.transform(query_im_histogram)
 
-        query_im_color_features = np.array(color_des.describe(image)).reshape((1,-1))
+        query_im_color_features = np.array(im_color_descriptors).reshape((1,-1))
         query_im_features_conc = np.concatenate([
             query_im_histogram.todense(), query_im_color_features
         ], axis=1)
 
         results = {}
         for i, image_features in enumerate(images_features):
-            # Sparse -> Matrix -> 1D array
             histA = np.asarray(image_features).reshape(-1)
             histB = np.asarray(query_im_features_conc).reshape(-1)
             d = cosine(histA, histB)

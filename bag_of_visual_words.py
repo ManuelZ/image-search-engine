@@ -142,9 +142,9 @@ def create_codebook(original_descriptors):
             best_clusterer        = kmeans
             best_n_clusters       = n_clusters
             best_silhouette_score = np.mean(s)
-    
 
     logging.info(f"Kmeans selected number of clusters: {best_n_clusters}.")
+    
     # Coordinates of cluster centers. 
     # n_clusters x N where N is the descriptor size
     codebook = best_clusterer.cluster_centers_ 
@@ -190,8 +190,6 @@ def calculate_sampled_silhouette(kmeans, stacked_descriptors, batch_size):
     return s
 
 
-
-
 def extract_descriptors(descriptors):
     """
     """
@@ -199,6 +197,7 @@ def extract_descriptors(descriptors):
     logging.info(f'Extracting features from {n_files} images...')
 
     final_results = [[] for d in descriptors]
+
     for i, img_path in tqdm(enumerate(images_paths)):
         
         image = cv2.imread(str(img_path))
@@ -217,6 +216,7 @@ def extract_descriptors(descriptors):
             final_results[j].append(description)
     
     final_results = [np.array(l) for l in final_results]
+    
     logging.info("Finished extracting images' features.")
 
     return final_results
@@ -232,7 +232,11 @@ def  main():
     # - Local Binary Patterns
     # - Gabor filters
     # - sklearn.feature_extraction.image.extract_patches_2d
-    # HOG
+    # - HOG
+    #
+    # Also, do an inverted file that holds the mapping of words to documents to
+    # quickly compute the similarity between a new image and all of the images 
+    # in the database.
 
     corner_des = CornerDescriptor()
     color_des = ColorDescriptor()
@@ -278,7 +282,8 @@ def  main():
     clusters_histograms_processed = pipeline.fit_transform(clusters_histograms)
 
     images_features = np.concatenate([
-        clusters_histograms_processed.todense(), images_color_descriptors], axis=1
+        clusters_histograms_processed.todense(),
+        images_color_descriptors], axis=1
     )
 
     logging.info(f"Histogram shape: {clusters_histograms_processed.shape}.")
