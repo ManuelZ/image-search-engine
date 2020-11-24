@@ -23,10 +23,9 @@ BATCH_SIZE = 50000
 NUM_CLUSTERS_TO_TEST = 2
 
 # Look for the best number of clusters between these ranges
-MIN_NUM_CLUSTERS, MAX_NUM_CLUSTERS = 100, 200
+MIN_NUM_CLUSTERS, MAX_NUM_CLUSTERS = 1000, 20000
 
 assert BATCH_SIZE >= MAX_NUM_CLUSTERS, "n_samples should be larger than max n_clusters"
-
 
 # Size of the thumbnails returnd by the server
 THUMBNAIL_SIZE = 256

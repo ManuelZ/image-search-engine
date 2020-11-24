@@ -155,36 +155,29 @@ def create_codebook(original_descriptors):
 def calculate_sampled_silhouette(kmeans, stacked_descriptors, batch_size):
     """
     Calculate the Silhouette score of this KMeans trained instance in a sample
-    of observations, multiple times. 
+    of observations, multiple times.
+    It's neccesary to sample because otherwise the time it takes to compute the
+    whole dataset is huge.
     """
-
-    # TODO: Predict only for the sample
+    
     logging.info(f'Calculating average sampled Silhouette score...')
     
-    cluster_labels = []
-    n_des = stacked_descriptors.shape[0]
-    limits = np.linspace(batch_size, n_des, n_des//batch_size, dtype=int)
-    start = 0
-    for end in tqdm(limits):
-        cluster_labels.extend(kmeans.predict(stacked_descriptors[start:end]))
-        start = end
-
-    # ndarray of shape (n_samples, )
-    cluster_labels = np.array(cluster_labels)
-
-    # Sample because calculating the Silhouette score takes too long with Brisk
     s = []
     for _ in range(SILHOUETTE_N_SAMPLES):
+        
         sample_idxs = random.sample(
             range(stacked_descriptors.shape[0]),
             SILHOUETTE_SAMPLE_SIZE
         )
+
         stacked_descriptors_sample = stacked_descriptors[sample_idxs, :]
-        cluster_labels_sample = cluster_labels[sample_idxs]
+        clusters_idxs_sample = kmeans.predict(stacked_descriptors_sample)
+    
         silhouette_avg = silhouette_score(
             stacked_descriptors_sample,
-            cluster_labels_sample
+            clusters_idxs_sample
         )
+        
         s.append(silhouette_avg)
     
     return s
@@ -244,8 +237,7 @@ def  main():
     # Step 1: Feature extraction
     # Each image will have multiple feature vectors
     (
-        images_corner_descriptors,
-        images_color_descriptors
+        images_corner_descriptors, images_color_descriptors
     ) = extract_descriptors([corner_des, color_des])
 
     print(f"images_corner_descriptors: {images_corner_descriptors.shape}")

@@ -34,7 +34,10 @@ CORS(app)
 
 def get_image(image_path):
     size = THUMBNAIL_SIZE, THUMBNAIL_SIZE
-    img = Image.open(image_path, mode='r')
+    try:
+        img = Image.open(image_path, mode='r')
+    except FileNotFoundError:
+        return None
     img.thumbnail(size, Image.ANTIALIAS)
     img_byte_arr = io.BytesIO()
     try:
@@ -51,7 +54,7 @@ if SAVED_DATA_PATH.exists():
         codebook,
         scaler,
         tfidf,
-        images_features,
+        db_images_features,
         paths_to_images
     ) = joblib.load(str(SAVED_DATA_PATH))
 
@@ -85,43 +88,51 @@ def predict():
         # Resize to standard custom size
         image = resize(image, RESIZE_WIDTH)
 
-        # Compute image descriptors
-        im_corner_descriptors = corner_des.describe(image)
-        im_color_descriptors  = color_des.describe(image)
+        descriptors = [
+            CornerDescriptor(),
+            ColorDescriptor()
+        ]
+
+        final_results = [des.describe(image) for des in descriptors]
+
+        images_corner_descriptors, images_color_descriptors = final_results
 
         # Quantize the image descriptor:
         # Predict the closest cluster that each sample belongs to. Each value 
         # returned by predict represents the index of the closest cluster 
         # center in the code book.
-        clusters_idxs = kmeans.predict(im_corner_descriptors)
+        clusters_idxs = kmeans.predict(images_corner_descriptors)
 
         # Histogram of image descriptor values
         query_im_histogram, _ = np.histogram(clusters_idxs, bins=n_clusters)
         query_im_histogram    = query_im_histogram.reshape(1, -1)
         query_im_histogram    = pipeline.transform(query_im_histogram)
 
-        query_im_color_features = np.array(im_color_descriptors).reshape((1,-1))
+        query_im_color_features = np.array(images_color_descriptors).reshape((1,-1))
         query_im_features_conc = np.concatenate([
             query_im_histogram.todense(), query_im_color_features
         ], axis=1)
 
         results = {}
-        for i, image_features in enumerate(images_features):
-            histA = np.asarray(image_features).reshape(-1)
-            histB = np.asarray(query_im_features_conc).reshape(-1)
-            d = cosine(histA, histB)
+        for i, image_features in enumerate(db_images_features):
+            fetA = np.asarray(image_features).reshape(-1)
+            fetB = np.asarray(query_im_features_conc).reshape(-1)
+            d = cosine(fetA, fetB)
             results[str(paths_to_images[i])] = d
         
         results = sorted([(v, k) for (k, v) in results.items()])
         results = results[:n_images]
-        results = [(dist, get_image(path_to_im), path_to_im) for (dist, path_to_im) in results]
-
+        r = []
+        for (dist, path_to_im) in results:
+            im = get_image(path_to_im)
+            if im is not None:
+                r.append((dist, im, path_to_im))
         end = time.time()
 
         print(f"Took {end - start:.1f} seconds.")
 
         return Response(
-            response=json.dumps({'prediction': results}),
+            response=json.dumps({'prediction': r}),
             status=200,
             mimetype="application/json"
         )
