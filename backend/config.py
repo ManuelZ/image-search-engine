@@ -5,6 +5,8 @@ import logging
 
 class Config:
 
+    NUM_IMAGES_TO_RETURN = 10
+
     MULTIPROCESS = True
 
     N_JOBS = 6
