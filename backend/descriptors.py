@@ -1,12 +1,11 @@
 # Standard-Library imports
-import logging
 import multiprocessing as mp
 from collections import defaultdict
 
 # External imports
 import cv2
 import numpy as np
-from tqdm import trange, tqdm
+from tqdm import tqdm
 from skimage import feature
 from skimage.util import img_as_ubyte
 from imutils import resize
@@ -19,8 +18,6 @@ from config import Config
 
 
 config = Config()
-
-
 
 def extract_descriptors(images_paths, descriptors, n=1):
     """
@@ -55,9 +52,6 @@ def extract_descriptors(images_paths, descriptors, n=1):
             # Concatenate all descriptors
             extracted[d_name].append(description)
 
-    # Convert to Numpy array
-    #extracted = { d_name : np.array(l) for d_name,l in extracted.items() }
-        
     return extracted
 
 

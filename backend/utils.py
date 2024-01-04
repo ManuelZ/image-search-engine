@@ -12,9 +12,11 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.feature_extraction.text import _document_frequency
 from sklearn.utils.validation import check_array, FLOAT_DTYPES
 import scipy.sparse as sp
+#import faiss
 
 # Local imports
 from config import Config
+
 
 def chunkIt(seq, num):
     """ Divide a list into roughly equal parts
@@ -74,11 +76,6 @@ def chi2_distance(histA, histB, eps=1e-10):
         for (a, b) in zip(histA, histB)])
 
     return d
-
-
-#import faiss
-import numpy as np
-
 
 class FaissKMeans:
     """
@@ -239,7 +236,3 @@ class OkapiTransformer(TransformerMixin, BaseEstimator):
 
     def _more_tags(self):
         return {'X_types': 'sparse'}
-
-
-
-

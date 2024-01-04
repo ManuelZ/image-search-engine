@@ -147,7 +147,11 @@ class ClusterEvaluator:
             self.best_score = score
 
 
-def run_clustering(descriptors: list[np.ndarray], clustering_config: ClusteringConfig, cluster_evaluator: ClusterEvaluator):
+def run_clustering(
+    descriptors: list[np.ndarray],
+    clustering_config: ClusteringConfig,
+    cluster_evaluator: ClusterEvaluator
+    ):
 
     method = config.CLUSTER_EVAL_METHOD
     sample_size = config.CLUSTER_EVAL_SAMPLE_SIZE
@@ -184,6 +188,7 @@ def run_clustering(descriptors: list[np.ndarray], clustering_config: ClusteringC
         # One row over the other
         if isinstance(descriptors, list):
             descriptors = np.concatenate(descriptors, axis=0)
+        
         clusterer.fit(descriptors)
         
         end = time.time()
@@ -235,8 +240,6 @@ def create_codebook(descriptors: list[np.ndarray]):
     Args
         descriptors: 
     """
-
-    #logging.info(f"Number of descriptors in the dataset: {descriptors.shape[0]}")
     
     clustering_config = ClusteringConfig(config, len(descriptors))
     cluster_evaluator = ClusterEvaluator(config.CLUSTER_EVAL_METHOD)
@@ -249,7 +252,6 @@ def create_codebook(descriptors: list[np.ndarray]):
     # Coordinates of cluster centers. 
     # n_clusters x N, where N is the descriptor size
     codebook = cluster_evaluator.best_clusterer.cluster_centers_
-    print(codebook.shape)
     
     return cluster_evaluator.best_clusterer, codebook
 
@@ -319,10 +321,6 @@ def bovw(descriptions: list[np.ndarray]):
     clusterer, codebook = create_codebook(descriptions)
     n_clusters = codebook.shape[0]
 
-    print(f"{n_clusters} clusters")
-
-    print(f"There are {len(descriptions)} descriptions")
-
 
     ###########################################################################
     # Image modeling
@@ -334,8 +332,6 @@ def bovw(descriptions: list[np.ndarray]):
     # 2) Create a histogram where the frequency of each cluster index is tracked
 
     clusters_histograms = np.zeros((len(descriptions), n_clusters))
-
-    print(f"len(descriptions): {len(descriptions)}")
 
     for i, des in enumerate(descriptions):
         clusters_idxs = clusterer.predict(des)
@@ -415,10 +411,6 @@ def  main():
 
         # Descriptions is a list of arrays of size (n,136)
         logging.info(f"Using descriptor '{descriptor_name}'")
-
-        # I expect this to be a list of arrays of size (n,136)
-        print(type(descriptions))
-        print(len(descriptions))
         
         if descriptor_name == 'corners':
             bovw_histogram, clusterer, codebook, pipeline = bovw(descriptions)
