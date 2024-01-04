@@ -55,7 +55,7 @@ def extract_descriptors(images_paths, descriptors, n=1):
     return extracted
 
 
-def multiprocessed_descriptors_extraction(images_paths, descriptors, n_jobs=4):
+def multiprocessed_descriptors_extraction(images_paths, descriptors, n_jobs=4) -> dict[str, list]:
     """
     Extract images' descriptions using multiple processes.
     """
@@ -79,16 +79,16 @@ def multiprocessed_descriptors_extraction(images_paths, descriptors, n_jobs=4):
     
     pool.close()
 
-    # Each get call blocks until the function is completed
-    output = [p.get() for p in results]
-    print("All feature extraction processes finished.")
+    extracted = defaultdict(list)
+    for r in results:
+        
+        # Each .get() call blocks until the applied function is completed
+        output = r.get()
 
-    extracted = { d_name: [] for d_name in descriptors.keys() }
-
-    for r in output:
         for d_name in descriptors.keys():
-            extracted[d_name].extend(r[d_name])
+            extracted[d_name].extend(output[d_name])
 
+    print("All feature extraction processes finished.")
     return extracted
 
 
@@ -108,7 +108,7 @@ class CornerDescriptor:
             self.extractor = cv2.SIFT_create()
 
         
-    def describe(self, image, visualize=False):
+    def describe(self, image, visualize=False) -> np.ndarray                                                                                                                                                                                         :
         """
         Args:
             image: 2 channels gray uint8 image in range 0-255
@@ -252,7 +252,7 @@ class HashDescriptor:
         self.hash_size = hash_size
     
     def describe(self, image):
-        return dhash(image, self.hash_size)
+        return np.array([dhash(image, self.hash_size)]).reshape(1,1)
     
 
 def show_descriptors_on_image():
@@ -280,8 +280,8 @@ def show_descriptors_on_image():
 
 
 DESCRIPTORS = {
-    "corners" : CornerDescriptor("daisy"),
+    # "corners" : CornerDescriptor("daisy"),
     # "hog" : HOGDescriptor(),
     # "color" : ColorDescriptor(),
-    # "hash" : HashDescriptor()
+    "hash" : HashDescriptor()
 }

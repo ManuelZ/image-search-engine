@@ -67,6 +67,16 @@ def dhash(image, hashSize=8):
     # convert the difference image to a hash
     return sum([2 ** i for (i, v) in enumerate(diff.flatten()) if v])
 
+def convert_hash(h):
+    """From: https://pyimagesearch.com/2019/08/26/building-an-image-hashing-search-engine-with-vp-trees-and-opencv/"""
+    return int(np.array(h, dtype="float64"))
+
+
+def hamming(a, b):
+    """ Compute and return the Hamming distance between the integers
+    From: https://pyimagesearch.com/2019/08/26/building-an-image-hashing-search-engine-with-vp-trees-and-opencv/"""
+    return bin(int(a) ^ int(b)).count("1")
+
 
 def chi2_distance(histA, histB, eps=1e-10):
     """
