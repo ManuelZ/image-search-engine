@@ -1,0 +1,11 @@
+flask-cors
+dask
+dask-image
+scikit-learn
+scikit-image
+scipy
+opencv-python
+numpy
+matplotlib
+pandas
+imutils

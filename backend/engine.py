@@ -1,5 +1,4 @@
 # Built-in imports
-import sys
 import json
 import time
 
@@ -7,45 +6,39 @@ import time
 from flask import Flask
 from flask import request
 from flask import Response
-from flask import send_file
-from flask_cors import CORS, cross_origin
-import pandas as pd
+from flask_cors import CORS
 import joblib
 import numpy as np
 import cv2
-from PIL import Image
 from scipy.spatial.distance import cosine
-from sklearn.pipeline import Pipeline
-from skimage.color import rgb2gray
 import skimage
+from skimage.util import img_as_ubyte
 
 # Local imports
-from config import SAVED_DATA_PATH
-from config import THUMBNAIL_SIZE
-from config import RESIZE_WIDTH
-from config import DESCRIPTORS
-from descriptors import ColorDescriptor
-from descriptors import CornerDescriptor
-from utils import resize
+from config import Config
+from descriptors import DESCRIPTORS
 from utils import get_image
 
 app = Flask(__name__)
 CORS(app)
 
-if SAVED_DATA_PATH.exists():
+config = Config()
+
+if config.BOVW_PATH.exists():
     if "corners" in DESCRIPTORS:
-        (
-            clusterer,
-            codebook,
-            pipeline,
-            db_images_features,
-            paths_to_images
-        ) = joblib.load(str(SAVED_DATA_PATH))
+        saved = joblib.load(str(config.BOVW_PATH))
+
+        clusterer = saved["clusterer"]
+        paths_to_images = saved["images_paths"]
+        db_images_features = saved["images_features"]
+        pipeline = saved["pipeline"]
+
+        print(len(paths_to_images))
 
         n_clusters = clusterer.cluster_centers_.shape[0]
     
     else:
-        db_images_features, paths_to_images = joblib.load(str(SAVED_DATA_PATH))
+        db_images_features, paths_to_images = joblib.load(str(config.BOVW_PATH))
 
 
 @app.route('/similar_images', methods=['POST'])
@@ -67,8 +60,15 @@ def predict():
         # Convert numpy array to image
         image = cv2.imdecode(npimg, cv2.IMREAD_UNCHANGED)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        image = skimage.transform.resize(image, (RESIZE_WIDTH,RESIZE_WIDTH))
-
+        image = skimage.transform.resize(
+            image          = image, 
+            output_shape   = (config.RESIZE_WIDTH,config.RESIZE_WIDTH),
+            anti_aliasing  = True,
+            mode           = 'constant',
+            preserve_range = False
+        )
+        image = img_as_ubyte(image)
+        
         to_concatenate = []
         for key,des in DESCRIPTORS.items():
             
@@ -98,6 +98,7 @@ def predict():
         # TODO: use a vectorized operation instead
         # scipy.spatial.distance.cdist(XA, XB, 'cosine')
         results = {}
+        print(db_images_features.shape)
         for i, image_features in enumerate(db_images_features):
             fetA = np.asarray(image_features).reshape(-1)
             fetB = np.asarray(query_im_features_conc).reshape(-1)
