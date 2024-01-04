@@ -11,13 +11,13 @@ import joblib
 import numpy as np
 import cv2
 from scipy.spatial.distance import cosine
-import skimage
+from imutils import resize
 from skimage.util import img_as_ubyte
 
 # Local imports
 from config import Config
 from descriptors import DESCRIPTORS
-from utils import get_image
+from utils import get_image, hamming, convert_hash
 
 app = Flask(__name__)
 CORS(app)
@@ -25,21 +25,18 @@ CORS(app)
 config = Config()
 
 if config.BOVW_PATH.exists():
-    if "corners" in DESCRIPTORS:
-        saved = joblib.load(str(config.BOVW_PATH))
 
+    saved = joblib.load(str(config.BOVW_PATH))
+
+    paths_to_images = saved["images_paths"]
+    db_images_features = saved["images_features"]
+
+    if "corners" in DESCRIPTORS:
         clusterer = saved["clusterer"]
         paths_to_images = saved["images_paths"]
         db_images_features = saved["images_features"]
         pipeline = saved["pipeline"]
-
-        print(len(paths_to_images))
-
         n_clusters = clusterer.cluster_centers_.shape[0]
-    
-    else:
-        db_images_features, paths_to_images = joblib.load(str(config.BOVW_PATH))
-
 
 @app.route('/similar_images', methods=['POST'])
 def predict():
@@ -60,13 +57,7 @@ def predict():
         # Convert numpy array to image
         image = cv2.imdecode(npimg, cv2.IMREAD_UNCHANGED)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        image = skimage.transform.resize(
-            image          = image, 
-            output_shape   = (config.RESIZE_WIDTH,config.RESIZE_WIDTH),
-            anti_aliasing  = True,
-            mode           = 'constant',
-            preserve_range = False
-        )
+        image = resize(image, width=config.RESIZE_WIDTH)
         image = img_as_ubyte(image)
         
         to_concatenate = []
@@ -97,27 +88,33 @@ def predict():
 
         # TODO: use a vectorized operation instead
         # scipy.spatial.distance.cdist(XA, XB, 'cosine')
-        results = {}
-        print(db_images_features.shape)
+        results = []
         for i, image_features in enumerate(db_images_features):
             fetA = np.asarray(image_features).reshape(-1)
             fetB = np.asarray(query_im_features_conc).reshape(-1)
-            d = cosine(fetA, fetB)
-            results[str(paths_to_images[i])] = d
+            
+            # If using dhash
+            if fetA.shape[0] == 1:
+                d = hamming(fetA, fetB)
+            else:
+                d = cosine(fetA, fetB)
+            
+            results.append((str(paths_to_images[i]), d))
         
-        results = sorted([(v, k) for (k, v) in results.items()])
+        results.sort(key=lambda x: x[1])
         results = results[:n_images]
-        r = []
-        for (dist, path_to_im) in results:
+        
+        predictions = []
+        for (path_to_im, dist) in results:
             im = get_image(path_to_im)
             if im is not None:
-                r.append((dist, im, path_to_im))
+                predictions.append((dist, im, path_to_im))
+        
         end = time.time()
-
         print(f"Took {end - start:.1f} seconds.")
 
         return Response(
-            response = json.dumps({'prediction': r}),
+            response = json.dumps({'prediction': predictions}),
             status   = 200,
             mimetype = "application/json"
         )

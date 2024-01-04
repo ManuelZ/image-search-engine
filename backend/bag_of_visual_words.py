@@ -383,6 +383,8 @@ def  main():
     # TODO: if the dataset is too large, extracting all the descriptors at the
     # beginning may collpse the memory. Better to load and clusterize in batches
 
+    descriptions_dict: dict[str, list]
+
     if config.DESCRIPTIONS_PATH.exists():
         logging.info("Loading descriptions from local file.")
         descriptions_dict, = joblib.load(str(config.DESCRIPTIONS_PATH))
@@ -409,17 +411,20 @@ def  main():
     features = []
     for descriptor_name, descriptions in descriptions_dict.items():
 
-        # Descriptions is a list of arrays of size (n,136)
+        # `descriptions` is a list of arrays of size (n,136)
         logging.info(f"Using descriptor '{descriptor_name}'")
-        
+
         if descriptor_name == 'corners':
             bovw_histogram, clusterer, codebook, pipeline = bovw(descriptions)
             logging.info(f"Histogram shape: {bovw_histogram.shape}.")
+            assert bovw_histogram.shape[0] == len(images_paths)
             features.append(bovw_histogram)
         else:
+            descriptions = np.array(descriptions).reshape(len(images_paths),-1)
+            assert descriptions.shape[0] == len(images_paths)
             features.append(descriptions)
 
-    images_features = np.concatenate(features, axis=1)      
+    images_features = np.concatenate(features, axis=1)
 
     logging.info(f"Final shape of feature vector: {images_features.shape}.")
     logging.info(f"Proportion of zeros in the feature vector: {(images_features < 01e-9).sum() / images_features.size:.3f}.")
@@ -439,7 +444,6 @@ def  main():
         to_save['codebook'] = codebook
         to_save['pipeline'] = pipeline
 
-    
     joblib.dump(to_save, str(config.BOVW_PATH), compress=3)
     logging.info("Done")
 
