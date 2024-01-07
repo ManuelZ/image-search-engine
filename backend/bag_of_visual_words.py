@@ -16,11 +16,12 @@ import time
 import random
 import logging
 from collections import defaultdict
+from pathlib import Path
+from typing import Protocol
 
 # External imports
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.cluster import MiniBatchKMeans
 from sklearn.metrics import silhouette_score
 from sklearn.metrics import davies_bouldin_score
 from sklearn.metrics import calinski_harabasz_score
@@ -30,6 +31,24 @@ import faiss
 # Local imports
 from utils import OkapiTransformer
 from config import Config
+from descriptors import (
+    Describer,
+    CornerDescriptor
+)
+
+
+class SupportsFit(Protocol):
+    def fit(self, X: np.ndarray, y: np.ndarray|None=None) -> None:
+        ...
+
+class SupportsPredict(Protocol):
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        ...
+
+class SKLearnKMeansLike(SupportsFit, SupportsPredict, Protocol):
+    cluster_centers_: np.ndarray
+    ...
+
 
 config = Config()
 
@@ -92,76 +111,52 @@ class ClusteringConfig:
         return clusters_range
 
 
+class FaissKMeans:
+    """
+    Modified from:
+    https://towardsdatascience.com/k-means-8x-faster-27x-lower-error-than-scikit-learns-in-25-lines-eaedc7a3a0c8
 
+    Docs: https://github.com/facebookresearch/faiss/wiki/Faiss-building-blocks:-clustering,-PCA,-quantization#clustering
+    """
+    def __init__(self, n_clusters=8, n_init=3, max_iter=25):
+        self.n_clusters       = n_clusters
+        self.n_init           = n_init
+        self.max_iter         = max_iter
+        self.inertia_         = None
+        self.cluster_centers_: np.ndarray | None
+        self.kmeans: faiss.Kmeans
 
-class ClustererWrapper:
-    def __init__(self, batch_size, n_clusters, n_features):
-        self.inertia_ = None
-        self.n_clusters = n_clusters
-        self.batch_size = batch_size
-        self.n_features = n_features  # Number of features of the observations
-        self.cluster_centers_ = None
+    def fit(self, X: np.ndarray, y: np.ndarray|None=None) -> None:
 
-    def set_clusterer(self, clusterer, **kwargs):
+        """
+        nredo: run the clustering this number of times, and keep the best centroids (selected according to clustering objective)
+        """
+        self.kmeans = faiss.Kmeans(
+            seed    = 42,
+            d       = X.shape[1],
+            k       = self.n_clusters,
+            niter   = self.max_iter,
+            nredo   = self.n_init,
+            # update_index = True,
+            spherical = True,
+            verbose = True
+        )
+        self.kmeans.train(X.astype(np.float32))
+        self.cluster_centers_ = self.kmeans.centroids
+        self.inertia_ = self.kmeans.obj[-1]
 
-        if clusterer == "mini-batch-kmeans":
-            self.clusterer = MiniBatchKMeans(
-                n_clusters = self.n_clusters,
-                random_state = 42,
-                max_iter = 100,
-                batch_size = self.batch_size,
-                verbose = 0,
-                tol = 0, # tune this
-                max_no_improvement = 5,
-                n_init = 3
-            )
-        
-        elif clusterer == "faiss-kmeans":
-            # The recipe: play with parameters of k-means clustering niter and max_points_per_centroid.
-            # From: https://github.com/facebookresearch/faiss/wiki/How-to-make-Faiss-run-faster#k-means-clustering
-            self.clusterer = faiss.Kmeans(int(self.n_features), int(self.n_clusters), **kwargs)
-    
-    def fit(self, X: np.ndarray):
-       
-        # faiss KMeans
-        if isinstance(self.clusterer, faiss.Kmeans):
-            self.clusterer.train(X)
-            self.inertia_ = self.clusterer.obj
-            self.cluster_centers_ = self.clusterer.centroids
-        
-        # sklearn Kmeans
-        elif isinstance(self.clusterer, MiniBatchKMeans):
-            self.clusterer.fit(X)
-
-    def predict(self, X):
-
-        if isinstance(self.clusterer, faiss.Kmeans):
-            """
-            query n vectors of dimension d to the index.
-
-            return at most k vectors. If there are not enough results for a query, the result array is padded with -1s.
-
-            Parameters:
-                n: number of vectors
-                x: input vectors to search, size n * d
-                k: number of extracted vectors
-                distances: output pairwise distances, size n*k
-                labels: output labels of the NNs, size n*k
-            """
-            # I: The nearest centroid for each line vector in x. 
-            # D: contains the squared L2 distances
-            D, I = self.clusterer.index.search(X, 1)
-            return I
-        
-        elif isinstance(self.clusterer, MiniBatchKMeans):
-            return self.clusterer.predict(X)
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        # I: The nearest centroid for each line vector in x. 
+        # D: contains the squared L2 distances
+        D,I = self.kmeans.index.search(X.astype(np.float32), 1)  # type: ignore
+        return I
     
 
 class ClusteringEvaluator:
 
     def __init__(self, method):
         self.method = method
-        self.best_clusterer: ClustererWrapper
+        self.best_clusterer: SKLearnKMeansLike
         self.best_n_clusters: int
         self.best_score = self.init_best_score()
 
@@ -193,7 +188,7 @@ class ClusteringEvaluator:
         
         raise Exception("Method not identified")
 
-    def evaluate(self, clusterer_model: ClustererWrapper, score, n_clusters):       
+    def evaluate(self, clusterer_model: SKLearnKMeansLike, score, n_clusters):       
         if self.should_update(score):
             self.best_clusterer = clusterer_model
             self.best_n_clusters = n_clusters
@@ -201,7 +196,7 @@ class ClusteringEvaluator:
 
 
 def run_clustering(
-    descriptions: list[np.ndarray],
+    descriptions_list: list[np.ndarray],
     clustering_config: ClusteringConfig,
     clustering_evaluator: ClusteringEvaluator
     ):
@@ -216,27 +211,21 @@ def run_clustering(
 
         start = time.time()
 
-        if len(descriptions[0].shape) == 1:
-            num_features = descriptions[0].shape[0]
-        else:
-            num_features = descriptions[0].shape[1]
+        # clusterer = MiniBatchKMeans(
+        #     n_clusters = n_clusters,
+        #     random_state = 42,
+        #     max_iter = 100,
+        #     batch_size = clustering_config.batch_size,
+        #     verbose = 0,
+        #     tol = 0, # tune this
+        #     max_no_improvement = 5,
+        #     n_init = 3
+        # )
 
-        clusterer = ClustererWrapper(
-            batch_size = clustering_config.batch_size,
-            n_clusters = n_clusters,
-            n_features= num_features
-        )
-
-        clusterer.set_clusterer("faiss-kmeans", niter=25, verbose=True)
-
-        if clustering_config.batch_size < config.BATCH_SIZE:
-            logging.info(f"Running Kmeans with {n_clusters} clusters...")
-        else:
-            logging.info(f"Running Batch Kmeans with {n_clusters} clusters...")
+        clusterer = FaissKMeans(n_clusters)
         
         # One row over the other
-        if isinstance(descriptions, list):
-            descriptions = np.concatenate(descriptions, axis=0)
+        descriptions = np.concatenate(descriptions_list, axis=0)
         
         clusterer.fit(descriptions)
         
@@ -276,7 +265,7 @@ def run_clustering(
     return results
 
 
-def create_codebook(descriptions: list[np.ndarray]) -> tuple[ClustererWrapper, np.ndarray]:
+def create_codebook(descriptions: list[np.ndarray]) -> tuple[SKLearnKMeansLike, np.ndarray]:
     """
     Create a dictionary of visual words (visual vocabulary, codebook) out of 
     the given descriptions. Instead of having an infinite number of possible
@@ -357,24 +346,11 @@ def calc_sampled_cluster_score(clusterer, descriptors: np.ndarray, sample_size: 
     return scores
 
 
-def create_bovw(
-    descriptions: list[np.ndarray]
-    ) -> tuple[np.ndarray, ClustererWrapper, np.ndarray, Pipeline]:
-    """
-    Args:
-        descriptions
-    """
-
-    ###########################################################################
-    # Clustering (vocabulary construction)
-    ###########################################################################
-
-    logging.info(f"Training Bag of Visual Words")
-
-    # The cluster centroids (codebook) are the dictionary of visual words
-    clusterer, codebook = create_codebook(descriptions)
-    n_clusters = codebook.shape[0]
-
+def extract_bovw_features(
+    descriptions: list[np.ndarray],
+    codebook: np.ndarray,
+    clusterer: SKLearnKMeansLike
+    ) -> tuple[np.ndarray, Pipeline]:
 
     ###########################################################################
     # Image modeling
@@ -384,6 +360,8 @@ def create_bovw(
     # 1) For each feature vector of an image, find the cluster index to which it
     #    belongs.
     # 2) Create a histogram where the frequency of each cluster index is tracked
+
+    n_clusters = codebook.shape[0]
 
     clusters_histograms = np.zeros((len(descriptions), n_clusters))
 
@@ -400,4 +378,22 @@ def create_bovw(
     # <class 'scipy.sparse._csr.csr_matrix'>
     bovw_histogram = pipeline.fit_transform(clusters_histograms).toarray()
 
-    return bovw_histogram, clusterer, codebook, pipeline
+    logging.info(f"Histogram shape: {bovw_histogram.shape}.")
+    # Shape: (n_images, n_clusters)
+
+    return bovw_histogram, pipeline
+
+
+def train_bag_of_visual_words(images_paths: list[Path]) -> tuple[SKLearnKMeansLike, np.ndarray, list[np.ndarray]]:
+    """
+    Extract features from 
+    """
+    # Extract corner features and describe all images
+    describer = Describer({ "corners" : CornerDescriptor("daisy") })
+    descriptions_dict = describer.generate_descriptions(images_paths)
+    descriptions = descriptions_dict['corners']
+    
+    # The cluster centroids (codebook) are the dictionary of visual words
+    clusterer, codebook = create_codebook(descriptions)
+
+    return clusterer, codebook, descriptions

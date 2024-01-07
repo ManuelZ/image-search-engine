@@ -10,7 +10,7 @@ from tqdm import tqdm
 from skimage import feature
 from skimage.util import img_as_ubyte
 from imutils import resize
-import skimage
+import skimage.transform
 import matplotlib.pyplot as plt
 
 # Local imports
@@ -158,11 +158,10 @@ class CornerDescriptor:
 
             des_num = des.shape[0] * des.shape[1] 
             des = des.reshape(des_num, des.shape[2])
-
-        if visualize:
-            return des, des_img
         else:
-            return des
+            raise Exception("The requested corner descriptor is unrecognized.")
+
+        return des
 
 
 class HOGDescriptor:
@@ -239,7 +238,7 @@ class ColorDescriptor:
 		# Construct an elliptical mask representing the center of the image
 		(axesX, axesY) = (int(w * 0.75) // 2, int(h * 0.75) // 2)
 		ellipMask = np.zeros(image.shape[:2], dtype = "uint8")
-		cv2.ellipse(ellipMask, (cX, cY), (axesX, axesY), 0, 0, 360, 255, -1)
+		cv2.ellipse(ellipMask, (cX, cY), (axesX, axesY), 0, 0, 360, [255, 255, 255], -1)
 
 		features = []
 		for (startX, endX, startY, endY) in segments:
@@ -299,9 +298,8 @@ def show_descriptors_on_image():
 
 
 DESCRIPTORS = {
-    "corners" : CornerDescriptor("daisy"),
     # "hog" : HOGDescriptor(),
-    #"color" : ColorDescriptor(),
-    #"dhash" : DHashDescriptor(hash_size=8),
-    #"color_hash" : ColorMomentHashDescriptor()
+    # "color" : ColorDescriptor(),
+    # "dhash" : DHashDescriptor(hash_size=8),
+    # "color_hash" : ColorMomentHashDescriptor()
 }

@@ -6,13 +6,10 @@ import io
 import numpy as np
 import cv2
 from PIL import Image
-import faiss # Windows: conda install faiss-cpu
 import scipy.sparse as sp
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.feature_extraction.text import _document_frequency
 from sklearn.utils.validation import check_array, FLOAT_DTYPES
-import scipy.sparse as sp
-#import faiss
 
 # Local imports
 from config import Config
@@ -87,39 +84,6 @@ def chi2_distance(histA, histB, eps=1e-10):
         for (a, b) in zip(histA, histB)])
 
     return d
-
-class FaissKMeans:
-    """
-    Modified from:
-    https://towardsdatascience.com/k-means-8x-faster-27x-lower-error-than-scikit-learns-in-25-lines-eaedc7a3a0c8
-
-    Docs: https://github.com/facebookresearch/faiss/wiki/Faiss-building-blocks:-clustering,-PCA,-quantization#clustering
-    """
-    def __init__(self, n_clusters=8, n_init=3, max_iter=25):
-        self.n_clusters       = n_clusters
-        self.n_init           = n_init
-        self.max_iter         = max_iter
-        self.kmeans           = None
-        self.inertia_         = None
-        self.cluster_centers_ = None
-
-    def fit(self, X, y=None):
-        self.kmeans = faiss.Kmeans(
-            seed    = 42,
-            d       = X.shape[1],
-            k       = self.n_clusters,
-            niter   = self.max_iter,
-            nredo   = self.n_init,
-            # update_index = True,
-            spherical = True,
-            verbose = True
-        )
-        self.kmeans.train(X.astype(np.float32))
-        self.cluster_centers_ = self.kmeans.centroids
-        self.inertia_ = self.kmeans.obj[-1]
-
-    def predict(self, X):
-        return self.kmeans.index.search(X.astype(np.float32), 1)[1]
 
 
 class OkapiTransformer(TransformerMixin, BaseEstimator):
