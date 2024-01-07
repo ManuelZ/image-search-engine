@@ -12,6 +12,7 @@
 
 # Standard Library imports
 import logging
+from pathlib import Path
 
 # External imports
 import joblib
@@ -25,19 +26,18 @@ from descriptors import DESCRIPTORS, Describer
 
 
 def get_images_descriptions(
-    describer: Describer, retrain: bool = False
+    describer: Describer, descriptions_path: Path, retrain: bool = False
 ) -> dict[str, list[np.ndarray]]:
     """
     Feature extraction
     """
 
-    if config.DESCRIPTIONS_PATH.exists() and not retrain:
+    if descriptions_path.exists() and not retrain:
         logging.info("Loading descriptions from local file.")
-        (descriptions_dict,) = joblib.load(str(config.DESCRIPTIONS_PATH))
+        (descriptions_dict,) = joblib.load(str(descriptions_path))
 
     else:
         logging.info("Recalculating descriptions.")
-
         if config.MULTIPROCESS:
             descriptions_dict = describer.multiprocessed_descriptors_extraction(
                 images_paths, n_jobs=config.N_JOBS
@@ -46,7 +46,7 @@ def get_images_descriptions(
             descriptions_dict = describer.generate_descriptions(images_paths)
 
         # Descriptions are not really needed, but helps saving them while developing
-        joblib.dump((descriptions_dict,), str(config.DESCRIPTIONS_PATH), compress=3)
+        joblib.dump((descriptions_dict,), str(descriptions_path), compress=3)
 
     return descriptions_dict
 
@@ -60,20 +60,22 @@ def main():
     # Extract features from images
     ###########################################################################
 
-    describer = Describer(DESCRIPTORS)
-    descriptions_dict = get_images_descriptions(describer)
+    features = []
+
+    # describer = Describer(DESCRIPTORS)
+    # descriptions_dict = get_images_descriptions(describer, config.DESCRIPTIONS_PATH)
+    descriptions_dict = {}
+
+    # Extract Bag Of Visual Words features
+    clusterer, codebook, descriptions = train_bag_of_visual_words(images_paths)
+    bovw_histogram, pipeline = extract_bovw_features(descriptions, codebook, clusterer)
+    print(f"bovw_histogram.shape: {bovw_histogram.shape}")
+    assert bovw_histogram.shape[0] == len(images_paths)
+    features.append(bovw_histogram)
 
     ###########################################################################
     # Concatenate all the features obtained from one image
     ###########################################################################
-
-    features = []
-
-    clusterer, codebook, descriptions = train_bag_of_visual_words(images_paths)
-    bovw_histogram, pipeline = extract_bovw_features(descriptions, codebook, clusterer)
-    assert bovw_histogram.shape[0] == len(images_paths)
-
-    features.append(bovw_histogram)
 
     for descriptor_name, descriptions in descriptions_dict.items():
         logging.info(f"Using descriptor '{descriptor_name}'")

@@ -15,15 +15,16 @@ class Config:
     # Path towards saved descriptions of images
     DESCRIPTIONS_PATH = Path("descriptions.joblib")
 
-    # Path towards the file where all the calculated data is saved
     BOVW_PATH = Path("bovw.joblib")
+
+    BOVW_CORNER_DESCRIPTIONS_PATH = Path("bovw_corner_descriptions.joblib")
 
     # Batch size of MiniBatchKmeans (this value is only used when the dataset is
     # larger than the given number)
     BATCH_SIZE = 20000
 
     # Logging level
-    LOGGING_LEVEL = logging.DEBUG
+    LOGGING_LEVEL = logging.INFO
 
     # Logging format
     LOGGING_FORMAT = "%(levelname)-5s: @%(funcName)-25s | %(message)s"
@@ -38,9 +39,9 @@ class Config:
     EXTENSIONS = ("*.jpg", "*.jpeg", "*.png")
 
     # Number of clusters to test from the valid range of clusters defined
-    NUM_CLUSTERS_TO_TEST = 1  # if 1, MIN_NUM_CLUSTERS_TO_TEST will be used
+    NUM_CLUSTERS_TO_TEST = 10  # if 1, MIN_NUM_CLUSTERS_TO_TEST will be used
     # Look for the best number of clusters between these ranges
-    MIN_NUM_CLUSTERS = 29  # 12 or 29 # minimum is 2
+    MIN_NUM_CLUSTERS = 2  # 12 or 29 # minimum is 2
     MAX_NUM_CLUSTERS = 1000
 
     # assert MIN_NUM_CLUSTERS <= MAX_NUM_CLUSTERS, "min n clusters <= max n clusters"
@@ -52,7 +53,7 @@ class Config:
     )
 
     # Size of the sample to evaluate the clustering method
-    CLUSTER_EVAL_SAMPLE_SIZE = 500
+    CLUSTER_EVAL_SAMPLE_SIZE = 2000
 
     # Number of times to repeat the sampling
     CLUSTER_EVAL_N_SAMPLES = 10

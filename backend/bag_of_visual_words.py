@@ -27,6 +27,7 @@ from sklearn.metrics import davies_bouldin_score
 from sklearn.metrics import calinski_harabasz_score
 from sklearn.pipeline import Pipeline
 import faiss
+import joblib
 
 # Local imports
 from utils import OkapiTransformer
@@ -130,13 +131,13 @@ class FaissKMeans:
         """
         self.kmeans = faiss.Kmeans(
             seed=42,
-            d=X.shape[1],
-            k=self.n_clusters,
+            d=int(X.shape[1]),
+            k=int(self.n_clusters),
             niter=self.max_iter,
             nredo=self.n_init,
             # update_index = True,
             spherical=True,
-            verbose=True,
+            verbose=False,
         )
         self.kmeans.train(X.astype(np.float32))
         self.cluster_centers_ = self.kmeans.centroids
@@ -392,9 +393,27 @@ def train_bag_of_visual_words(
     """
     Extract features from
     """
-    # Extract corner features and describe all images
-    describer = Describer({"corners": CornerDescriptor("daisy")})
-    descriptions_dict = describer.generate_descriptions(images_paths)
+
+    if config.BOVW_CORNER_DESCRIPTIONS_PATH.exists():
+        logging.info("Loading corner features for a BOVW model from local file.")
+        (descriptions_dict,) = joblib.load(str(config.BOVW_CORNER_DESCRIPTIONS_PATH))
+    else:
+        logging.info("Extracting corner features for a BOVW model.")
+        # Extract corner features and describe all images
+        describer = Describer({"corners": CornerDescriptor("daisy")})
+
+        # TODO: Duplicated. create a function.
+        if config.MULTIPROCESS:
+            descriptions_dict = describer.multiprocessed_descriptors_extraction(
+                images_paths, n_jobs=config.N_JOBS
+            )
+        else:
+            descriptions_dict = describer.generate_descriptions(images_paths)
+
+        joblib.dump(
+            (descriptions_dict,), str(config.BOVW_CORNER_DESCRIPTIONS_PATH), compress=3
+        )
+
     descriptions = descriptions_dict["corners"]
 
     # The cluster centroids (codebook) are the dictionary of visual words

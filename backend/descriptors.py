@@ -28,7 +28,18 @@ config = Config()
 
 class Describer:
     def __init__(self, descriptors: dict[str, SupportsDescribe]):
-        self.descriptors = descriptors
+        self.descriptors = self.validate_descriptors(descriptors)
+
+    def validate_descriptors(
+        self, descriptors: dict[str, SupportsDescribe]
+    ) -> dict[str, SupportsDescribe]:
+        """
+        Validate that descriptors are provided.
+        """
+        if len(descriptors.items()) == 0:
+            raise Exception("No descriptors provided")
+
+        return descriptors
 
     def generate_descriptions(self, images_paths, n=1) -> dict[str, list[np.ndarray]]:
         """
@@ -40,6 +51,8 @@ class Describer:
         Returns:
 
         """
+        if len(self.descriptors.items()) == 0:
+            raise Exception("No descriptors provided")
 
         extracted: dict[str, list[np.ndarray]] = defaultdict(list)
 
@@ -84,9 +97,15 @@ class Describer:
             num_images = len(list(x.values())[0])
             pbar.update(num_images)
 
+        def error_cb(x):
+            print(f"Error while applying async function: ", x)
+
         results = [
             pool.apply_async(
-                func=self.generate_descriptions, args=(paths, i), callback=update_pbar
+                func=self.generate_descriptions,
+                args=(paths, i),
+                callback=update_pbar,
+                error_callback=error_cb,
             )
             for i, paths in enumerate(paths_chunks)
         ]
