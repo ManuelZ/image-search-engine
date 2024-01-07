@@ -1,6 +1,7 @@
 # Standard-Library imports
 import multiprocessing as mp
 from collections import defaultdict
+from typing import Protocol
 
 # External imports
 import cv2
@@ -16,80 +17,88 @@ import matplotlib.pyplot as plt
 from utils import dhash, chunkIt
 from config import Config
 
+class SupportsDescribe(Protocol):
+    def describe(self, image: np.ndarray) -> np.ndarray:
+        ...
 
 config = Config()
 
-def extract_descriptors(images_paths, descriptors, n=1):
-    """
+class Describer:
 
-    Args:
-        descriptors: dict of descriptor name and descriptor object with a 
-                     .describe() method.
-    """
+    def __init__(self, descriptors: dict[str, SupportsDescribe]):
+        self.descriptors = descriptors
+     
+    def generate_descriptions(self, images_paths, n=1) -> dict[str, list[np.ndarray]]:
+        """
 
-    extracted = defaultdict(list)
-
-    # https://github.com/tqdm/tqdm#nested-progress-bars
-    for img_path in images_paths:
-        image = cv2.imread(str(img_path), cv2.IMREAD_UNCHANGED)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        image = resize(image, width=config.RESIZE_WIDTH)
-        image = img_as_ubyte(image)
+        Args:
+            images_paths:
+            n:
         
-        for d_name, descriptor in descriptors.items():
+        Returns:
+
+        """
+
+        extracted: dict[str, list[np.ndarray]] = defaultdict(list)
+
+        for img_path in images_paths:
+            image = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
+            image = resize(image, width=config.RESIZE_WIDTH)
+            image = img_as_ubyte(image)
             
-            try:
-                # Shape (n, 136), n depends on iamge size and other factors
-                description = descriptor.describe(image)
-            except Exception as e:
-                description = None
-                print(f"Trouble describing image {img_path}\n {e}")
-            
-            # Brisk sometimes may not find corners
-            if description is None:
-                continue
-            
-            # Concatenate all descriptors
-            extracted[d_name].append(description)
+            for d_name, descriptor in self.descriptors.items():
+                
+                try:
+                    # Shape (n, 136), n depends on image size and other factors
+                    description = descriptor.describe(image)
+                    if description.ndim == 1:
+                        print(f"Description has a single dimension ({description.shape}, so it will be reshaped with `.reshape(1,-1)`)")
+                        description = description.reshape(1,-1)
+                    # Concatenate all descriptors
+                    extracted[d_name].append(description)
+                
+                # Brisk sometimes may not find corners
+                except Exception as e:
+                    print(f"Trouble describing image {img_path}\n {e}")
+                    continue
 
-    return extracted
+        return extracted
 
+    def multiprocessed_descriptors_extraction(self, images_paths, n_jobs=4) -> dict[str, list]:
+        """
+        Extract images' descriptions using multiple processes.
+        """
 
-def multiprocessed_descriptors_extraction(images_paths, descriptors, n_jobs=4) -> dict[str, list]:
-    """
-    Extract images' descriptions using multiple processes.
-    """
+        pbar = tqdm(total=len(images_paths))
 
-    pbar = tqdm(total=len(images_paths))
-
-    # https://github.com/tqdm/tqdm#nested-progress-bars
-    pool = mp.Pool(processes=n_jobs)
-    paths_chunks = chunkIt(images_paths, n_jobs*16)
-    
-    def update_pbar(x):
-        num_images = len(list(x.values())[0])
-        pbar.update(num_images)
-
-    results = [
-        pool.apply_async(
-            func     = extract_descriptors,
-            args     = (paths, descriptors, i),
-            callback = update_pbar
-        ) for i,paths in enumerate(paths_chunks)]
-    
-    pool.close()
-
-    extracted = defaultdict(list)
-    for r in results:
+        # https://github.com/tqdm/tqdm#nested-progress-bars
+        pool = mp.Pool(processes=n_jobs)
+        paths_chunks = chunkIt(images_paths, n_jobs*16)
         
-        # Each .get() call blocks until the applied function is completed
-        output = r.get()
+        def update_pbar(x):
+            num_images = len(list(x.values())[0])
+            pbar.update(num_images)
 
-        for d_name in descriptors.keys():
-            extracted[d_name].extend(output[d_name])
+        results = [
+            pool.apply_async(
+                func     = self.generate_descriptions,
+                args     = (paths, i),
+                callback = update_pbar
+            ) for i,paths in enumerate(paths_chunks)]
+        
+        pool.close()
 
-    print("All feature extraction processes finished.")
-    return extracted
+        extracted = defaultdict(list)
+        for r in results:
+            
+            # Each .get() call blocks until the applied function is completed
+            output = r.get()
+
+            for d_name in self.descriptors.keys():
+                extracted[d_name].extend(output[d_name])
+
+        print("All feature extraction processes finished.")
+        return extracted
 
 
 class CornerDescriptor:
@@ -108,7 +117,7 @@ class CornerDescriptor:
             self.extractor = cv2.SIFT_create()
 
         
-    def describe(self, image, visualize=False) -> np.ndarray                                                                                                                                                                                         :
+    def describe(self, image: np.ndarray, visualize:bool=False) -> np.ndarray                                                                                                                                                                                         :
         """
         Args:
             image: 2 channels gray uint8 image in range 0-255
@@ -116,6 +125,11 @@ class CornerDescriptor:
             an nx64 vector in the case of BRISK (variable number of rows,
             depending on the number of keypoints detected)
         """
+
+        # Convert to grasycale
+        if len(image.shape) == 3 and image.shape[2] == 3:
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            image = img_as_ubyte(image)
 
         if self.kind in ['brisk',  'sift']:
             kp, des = self.extractor.detectAndCompute(image, mask=None)
@@ -155,7 +169,7 @@ class HOGDescriptor:
     def __init__(self):
         pass
 
-    def describe(self, image):
+    def describe(self, image: np.ndarray):
 
         H = feature.hog(
             image           = image,
@@ -200,7 +214,7 @@ class ColorDescriptor:
 
 		return hist
 
-	def describe(self, image):
+	def describe(self, image: np.ndarray):
 		"""
 		Return a 
 		"""
@@ -247,13 +261,18 @@ class ColorDescriptor:
 		return features
 
 
-class HashDescriptor:
-    def __init__(self, hash_size=8):
+class DHashDescriptor:
+    def __init__(self, hash_size:int=8):
         self.hash_size = hash_size
     
-    def describe(self, image):
+    def describe(self, image: np.ndarray):
         return np.array([dhash(image, self.hash_size)]).reshape(1,1)
     
+
+class ColorMomentHashDescriptor:   
+    def describe(self, image):
+        return np.array([cv2.img_hash.colorMomentHash(image)]).reshape(1,-1)
+
 
 def show_descriptors_on_image():
     descriptor = CornerDescriptor('daisy')
@@ -280,8 +299,9 @@ def show_descriptors_on_image():
 
 
 DESCRIPTORS = {
-    # "corners" : CornerDescriptor("daisy"),
+    "corners" : CornerDescriptor("daisy"),
     # "hog" : HOGDescriptor(),
-    # "color" : ColorDescriptor(),
-    "hash" : HashDescriptor()
+    #"color" : ColorDescriptor(),
+    #"dhash" : DHashDescriptor(hash_size=8),
+    #"color_hash" : ColorMomentHashDescriptor()
 }

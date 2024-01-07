@@ -34,10 +34,6 @@ def formdata_file_to_image(file):
     image_str = file.read()
     npimg = np.frombuffer(image_str, np.uint8)
     image = cv2.imdecode(npimg, cv2.IMREAD_UNCHANGED)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    image = resize(image, width=config.RESIZE_WIDTH)
-    image = img_as_ubyte(image)
-
     return image
 
 
@@ -68,6 +64,9 @@ def run_image_query(query_im_features_conc, n_images):
     for i, image_features in enumerate(db_images_features):
         fetA = np.asarray(image_features).reshape(-1)
         fetB = np.asarray(query_im_features_conc).reshape(-1)
+
+        assert fetA.shape[0] == fetB.shape[0], "Descriptions have different number of rows"
+        assert fetA.shape[1] == fetB.shape[1], "Descriptions have different number of columns"
         
         # If using dhash
         if fetA.shape[0] == 1:
@@ -120,6 +119,8 @@ def predict():
 
     start = time.time()
     image = formdata_file_to_image(request.files['image'])
+    image = resize(image, width=config.RESIZE_WIDTH)
+    image = img_as_ubyte(image)
     query_im_features_conc = extract_features(image)
     predictions = run_image_query(query_im_features_conc, config.NUM_IMAGES_TO_RETURN)
     end = time.time()

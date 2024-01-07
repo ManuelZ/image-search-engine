@@ -20,32 +20,20 @@ from collections import defaultdict
 # External imports
 import numpy as np
 import matplotlib.pyplot as plt
-import joblib
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.metrics import silhouette_score
 from sklearn.metrics import davies_bouldin_score
 from sklearn.metrics import calinski_harabasz_score
 from sklearn.pipeline import Pipeline
+import faiss
 
 # Local imports
 from utils import OkapiTransformer
 from config import Config
-from descriptors import (
-    extract_descriptors,
-    multiprocessed_descriptors_extraction,
-    DESCRIPTORS
-)
 
 config = Config()
 
-logging.basicConfig(format=config.LOGGING_FORMAT, level=config.LOGGING_LEVEL)
 
-images_paths = []
-for ext in config.EXTENSIONS:
-    images_paths.extend(config.DATA_FOLDER_PATH.rglob(ext))
-
-
-   
 def plot_results(results):
     num_graphs = 5
 
@@ -76,16 +64,17 @@ class ClusteringConfig:
     
     def __init__(self, config, n_descriptors):
         self.config = config
-        self.batch_size = self.calc_batch_size(n_descriptors)
+        self.batch_size = self.__calc_batch_size(n_descriptors)
+        self.min_clusters = self.config.MIN_NUM_CLUSTERS
         self.max_clusters = np.min([self.config.MAX_NUM_CLUSTERS + 1, n_descriptors])
-        self.range_clusters = self.calc_range_clusters()
+        self.range_clusters = self.__calc_clusters_range()
 
 
-    def calc_batch_size(self, n_descriptors):
+    def __calc_batch_size(self, n_descriptors):
         return np.min([n_descriptors, self.config.BATCH_SIZE])
 
 
-    def calc_range_clusters(self):
+    def __calc_clusters_range(self):
         if self.config.NUM_CLUSTERS_TO_TEST == 1:
             clusters_range = [self.config.MIN_NUM_CLUSTERS]
 
@@ -94,8 +83,8 @@ class ClusteringConfig:
             clusters_range = np.arange(
                 self.config.MIN_NUM_CLUSTERS,
                 self.max_clusters,
-                (self.max_clusters - self.config.MIN_NUM_CLUSTERS) / self.config.NUM_CLUSTERS_TO_TEST,
-                dtype=np.int
+                (self.max_clusters - self.min_clusters) / self.config.NUM_CLUSTERS_TO_TEST,
+                dtype=np.int32
             )
         
         logging.info(f"Number of clusters to test: {clusters_range}")
@@ -103,12 +92,77 @@ class ClusteringConfig:
         return clusters_range
 
 
-class ClusterEvaluator:
+
+
+class ClustererWrapper:
+    def __init__(self, batch_size, n_clusters, n_features):
+        self.inertia_ = None
+        self.n_clusters = n_clusters
+        self.batch_size = batch_size
+        self.n_features = n_features  # Number of features of the observations
+        self.cluster_centers_ = None
+
+    def set_clusterer(self, clusterer, **kwargs):
+
+        if clusterer == "mini-batch-kmeans":
+            self.clusterer = MiniBatchKMeans(
+                n_clusters = self.n_clusters,
+                random_state = 42,
+                max_iter = 100,
+                batch_size = self.batch_size,
+                verbose = 0,
+                tol = 0, # tune this
+                max_no_improvement = 5,
+                n_init = 3
+            )
+        
+        elif clusterer == "faiss-kmeans":
+            # The recipe: play with parameters of k-means clustering niter and max_points_per_centroid.
+            # From: https://github.com/facebookresearch/faiss/wiki/How-to-make-Faiss-run-faster#k-means-clustering
+            self.clusterer = faiss.Kmeans(int(self.n_features), int(self.n_clusters), **kwargs)
+    
+    def fit(self, X: np.ndarray):
+       
+        # faiss KMeans
+        if isinstance(self.clusterer, faiss.Kmeans):
+            self.clusterer.train(X)
+            self.inertia_ = self.clusterer.obj
+            self.cluster_centers_ = self.clusterer.centroids
+        
+        # sklearn Kmeans
+        elif isinstance(self.clusterer, MiniBatchKMeans):
+            self.clusterer.fit(X)
+
+    def predict(self, X):
+
+        if isinstance(self.clusterer, faiss.Kmeans):
+            """
+            query n vectors of dimension d to the index.
+
+            return at most k vectors. If there are not enough results for a query, the result array is padded with -1s.
+
+            Parameters:
+                n: number of vectors
+                x: input vectors to search, size n * d
+                k: number of extracted vectors
+                distances: output pairwise distances, size n*k
+                labels: output labels of the NNs, size n*k
+            """
+            # I: The nearest centroid for each line vector in x. 
+            # D: contains the squared L2 distances
+            D, I = self.clusterer.index.search(X, 1)
+            return I
+        
+        elif isinstance(self.clusterer, MiniBatchKMeans):
+            return self.clusterer.predict(X)
+    
+
+class ClusteringEvaluator:
 
     def __init__(self, method):
         self.method = method
-        self.best_clusterer = None
-        self.best_n_clusters = None
+        self.best_clusterer: ClustererWrapper
+        self.best_n_clusters: int
         self.best_score = self.init_best_score()
 
 
@@ -139,8 +193,7 @@ class ClusterEvaluator:
         
         raise Exception("Method not identified")
 
-
-    def evaluate(self, clusterer_model, score, n_clusters):       
+    def evaluate(self, clusterer_model: ClustererWrapper, score, n_clusters):       
         if self.should_update(score):
             self.best_clusterer = clusterer_model
             self.best_n_clusters = n_clusters
@@ -148,9 +201,9 @@ class ClusterEvaluator:
 
 
 def run_clustering(
-    descriptors: list[np.ndarray],
+    descriptions: list[np.ndarray],
     clustering_config: ClusteringConfig,
-    cluster_evaluator: ClusterEvaluator
+    clustering_evaluator: ClusteringEvaluator
     ):
 
     method = config.CLUSTER_EVAL_METHOD
@@ -163,22 +216,18 @@ def run_clustering(
 
         start = time.time()
 
-        clusterer = MiniBatchKMeans(
-            n_clusters         = n_clusters,
-            random_state       = 42,
-            max_iter           = 100,
-            batch_size         = clustering_config.batch_size,
-            verbose            = 0,
-            tol                = 0, # tune this
-            max_no_improvement = 5,
-            n_init             = 3
+        if len(descriptions[0].shape) == 1:
+            num_features = descriptions[0].shape[0]
+        else:
+            num_features = descriptions[0].shape[1]
+
+        clusterer = ClustererWrapper(
+            batch_size = clustering_config.batch_size,
+            n_clusters = n_clusters,
+            n_features= num_features
         )
 
-        # clusterer = FaissKMeans(
-        #     n_clusters = int(n_clusters),
-        #     max_iter   = 60,
-        #     n_init     = 2
-        # )
+        clusterer.set_clusterer("faiss-kmeans", niter=25, verbose=True)
 
         if clustering_config.batch_size < config.BATCH_SIZE:
             logging.info(f"Running Kmeans with {n_clusters} clusters...")
@@ -186,10 +235,10 @@ def run_clustering(
             logging.info(f"Running Batch Kmeans with {n_clusters} clusters...")
         
         # One row over the other
-        if isinstance(descriptors, list):
-            descriptors = np.concatenate(descriptors, axis=0)
+        if isinstance(descriptions, list):
+            descriptions = np.concatenate(descriptions, axis=0)
         
-        clusterer.fit(descriptors)
+        clusterer.fit(descriptions)
         
         end = time.time()
 
@@ -197,19 +246,20 @@ def run_clustering(
         
         cluster_evaluation_scores = calc_sampled_cluster_score(
             clusterer,
-            descriptors,
+            descriptions,
             sample_size,
             n_samples,
             method
         )
 
-        mean_score = np.mean(cluster_evaluation_scores['scores'][method])
-        std_score = np.std(cluster_evaluation_scores['scores'][method], ddof=1)
+        mean_score = np.mean(cluster_evaluation_scores[method])
+        std_score = np.std(cluster_evaluation_scores[method], ddof=1)
 
         logging.info(f"Mean '{method}' score for {n_clusters} clusters: {mean_score:.3f} ± {std_score:.3f}")
-        logging.info(f"Total inertia of {clusterer.inertia_/1024:.1f} K")
+        # Don't know yet how to get inertia from faiss
+        #logging.info(f"Total inertia of {clusterer.inertia_/1024:.1f} K")
 
-        cluster_evaluator.evaluate(clusterer, mean_score, n_clusters)
+        clustering_evaluator.evaluate(clusterer, mean_score, n_clusters)
 
         # Save information of this run
         results['method'].append(method)
@@ -217,19 +267,19 @@ def run_clustering(
         results['score'].append(mean_score)
         results['inertia'].append(clusterer.inertia_)
         results['time'].append(end-start)
-        results['silhouette'].append(np.mean(cluster_evaluation_scores['scores']['silhouette']))
-        results['davies-bouldin'].append(np.mean(cluster_evaluation_scores['scores']['davies-bouldin']))
-        results['calinski-harabasz'].append(np.mean(cluster_evaluation_scores['scores']['calinski-harabasz']))
+        results['silhouette'].append(np.mean(cluster_evaluation_scores['silhouette']))
+        results['davies-bouldin'].append(np.mean(cluster_evaluation_scores['davies-bouldin']))
+        results['calinski-harabasz'].append(np.mean(cluster_evaluation_scores['calinski-harabasz']))
     
-    logging.info(f"Kmeans selected number of clusters: {cluster_evaluator.best_n_clusters}.")
+    logging.info(f"Kmeans selected number of clusters: {clustering_evaluator.best_n_clusters}.")
     
     return results
 
 
-def create_codebook(descriptors: list[np.ndarray]):
+def create_codebook(descriptions: list[np.ndarray]) -> tuple[ClustererWrapper, np.ndarray]:
     """
     Create a dictionary of visual words (visual vocabulary, codebook) out of 
-    the given descriptors. Instead of having an infinite number of possible
+    the given descriptions. Instead of having an infinite number of possible
     points in the space, reduce the possibilities to a certain fixed number of
     clusters.
     
@@ -237,23 +287,25 @@ def create_codebook(descriptors: list[np.ndarray]):
     - Too small: visual words not representative of all patches
     - Too large: quantization artifacts, overfitting
 
-    Args
-        descriptors: 
+    Args:
+        descriptions:
     """
     
-    clustering_config = ClusteringConfig(config, len(descriptors))
-    cluster_evaluator = ClusterEvaluator(config.CLUSTER_EVAL_METHOD)
+    clustering_config = ClusteringConfig(config, len(descriptions))
+    clustering_evaluator = ClusteringEvaluator(config.CLUSTER_EVAL_METHOD)
     
-    results = run_clustering(descriptors, clustering_config, cluster_evaluator)
+    results = run_clustering(descriptions, clustering_config, clustering_evaluator)
 
     if len(clustering_config.range_clusters) > 1:
         plot_results(results)
 
-    # Coordinates of cluster centers. 
-    # n_clusters x N, where N is the descriptor size
-    codebook = cluster_evaluator.best_clusterer.cluster_centers_
+    best_clusterer = clustering_evaluator.best_clusterer
+
+    # The Codebook has the coordinates of the clusters' centers
+    # Shape: n_clusters x N, where N is the descriptor size
+    codebook = best_clusterer.cluster_centers_ 
     
-    return cluster_evaluator.best_clusterer, codebook
+    return best_clusterer, codebook
 
 
 def calc_sampled_cluster_score(clusterer, descriptors: np.ndarray, sample_size: int, repeat: int, eval_method: str):
@@ -302,20 +354,22 @@ def calc_sampled_cluster_score(clusterer, descriptors: np.ndarray, sample_size: 
         scores['davies-bouldin'].append(davies_bouldin_score(descriptors_sample, cluster_idx_sample))
         scores['calinski-harabasz'].append(calinski_harabasz_score(descriptors_sample, cluster_idx_sample))
 
-    return { 'scores': scores }
+    return scores
 
 
-def bovw(descriptions: list[np.ndarray]):
+def create_bovw(
+    descriptions: list[np.ndarray]
+    ) -> tuple[np.ndarray, ClustererWrapper, np.ndarray, Pipeline]:
     """
     Args:
-        descriptions: vector of extracted features
+        descriptions
     """
 
     ###########################################################################
-    # Vocabulary construction (clustering)
+    # Clustering (vocabulary construction)
     ###########################################################################
 
-    logging.info(f"Running BOVW")
+    logging.info(f"Training Bag of Visual Words")
 
     # The cluster centroids (codebook) are the dictionary of visual words
     clusterer, codebook = create_codebook(descriptions)
@@ -340,113 +394,10 @@ def bovw(descriptions: list[np.ndarray]):
 
     pipeline = Pipeline([
         # Transform a count matrix to a normalized tf or tf-idf representation
-        # ('tfidf', TfidfTransformer(norm='l2', sublinear_tf=True)),
         ('tfidf', OkapiTransformer()),
     ])
 
-    bovw_histogram = pipeline.fit_transform(clusters_histograms).todense()
+    # <class 'scipy.sparse._csr.csr_matrix'>
+    bovw_histogram = pipeline.fit_transform(clusters_histograms).toarray()
 
     return bovw_histogram, clusterer, codebook, pipeline
-
-
-def  main():
-    """
-    Extract image features from all the images found in `config.DATA_FOLDER_PATH`.
-    """
-
-    # TODO: Add more features:
-    # - Haralick texture
-    # - Local Binary Patterns
-    # - Gabor filters
-    # - sklearn.feature_extraction.image.extract_patches_2d
-    # - HOG
-    #
-    # Also, do an inverted index file to hold the mapping of words to documents 
-    # to quickly compute the similarity between a new image and all of the 
-    # images in the database.
-    
-    # Mean images width and height
-    # shapes = np.zeros((len(images_paths),2))
-    # for i,p in tqdm(enumerate(images_paths)):
-    #     image = io.imread(str(p))
-    #     h,w,_ = image.shape 
-    #     shapes[i,0] = h
-    #     shapes[i,1] = w
-    # print(f"Mean height: {shapes[:,0].mean():.1f} +- {shapes[:,0].std():.1f}")
-    # print(f"Mean widtht: {shapes[:,1].mean():.1f} +- {shapes[:,1].std():.1f}")
-
-    ###########################################################################
-    #  Feature extraction
-    ###########################################################################
-    # Each image will have multiple feature vectors
-
-    # TODO: if the dataset is too large, extracting all the descriptors at the
-    # beginning may collpse the memory. Better to load and clusterize in batches
-
-    descriptions_dict: dict[str, list]
-
-    if config.DESCRIPTIONS_PATH.exists():
-        logging.info("Loading descriptions from local file.")
-        descriptions_dict, = joblib.load(str(config.DESCRIPTIONS_PATH))
-    
-    else:
-        logging.info("Recalculating descriptions.")
-
-        # Apparently, SIFT can't get from one processes to another
-        if DESCRIPTORS.get('corners') and (DESCRIPTORS.get('corners').kind == 'sift'):
-            descriptions_dict = extract_descriptors(images_paths, DESCRIPTORS)
-        elif config.MULTIPROCESS:
-            descriptions_dict = multiprocessed_descriptors_extraction(images_paths, DESCRIPTORS, n_jobs=config.N_JOBS)
-        else:
-            descriptions_dict = extract_descriptors(images_paths, DESCRIPTORS)
-        
-        joblib.dump((descriptions_dict,), str(config.DESCRIPTIONS_PATH), compress=3)
-
-
-    ###########################################################################
-    # Concatenate features:
-    # Concatenate all the features obtained for one image
-    ###########################################################################
-
-    features = []
-    for descriptor_name, descriptions in descriptions_dict.items():
-
-        # `descriptions` is a list of arrays of size (n,136)
-        logging.info(f"Using descriptor '{descriptor_name}'")
-
-        if descriptor_name == 'corners':
-            bovw_histogram, clusterer, codebook, pipeline = bovw(descriptions)
-            logging.info(f"Histogram shape: {bovw_histogram.shape}.")
-            assert bovw_histogram.shape[0] == len(images_paths)
-            features.append(bovw_histogram)
-        else:
-            descriptions = np.array(descriptions).reshape(len(images_paths),-1)
-            assert descriptions.shape[0] == len(images_paths)
-            features.append(descriptions)
-
-    images_features = np.concatenate(features, axis=1)
-
-    logging.info(f"Final shape of feature vector: {images_features.shape}.")
-    logging.info(f"Proportion of zeros in the feature vector: {(images_features < 01e-9).sum() / images_features.size:.3f}.")
-
-    to_save = {
-        'images_paths': images_paths,
-        'images_features': images_features,
-    }
-    
-    if "corners" in descriptions_dict:
-        if 'faiss' in str(clusterer.__class__):
-            pass
-        if 'sklearn' in str(clusterer.__class__):
-            pass
-        
-        to_save['clusterer'] = clusterer
-        to_save['codebook'] = codebook
-        to_save['pipeline'] = pipeline
-
-    joblib.dump(to_save, str(config.BOVW_PATH), compress=3)
-    logging.info("Done")
-
-
-if __name__ == "__main__":
-    main()
