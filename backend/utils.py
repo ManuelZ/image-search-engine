@@ -16,7 +16,7 @@ from config import Config
 
 
 def chunkIt(seq, num):
-    """ Divide a list into roughly equal parts
+    """Divide a list into roughly equal parts
     From: https://stackoverflow.com/a/2130035/1253729
     """
     avg = len(seq) / float(num)
@@ -24,7 +24,7 @@ def chunkIt(seq, num):
     last = 0.0
 
     while last < len(seq):
-        out.append(seq[int(last):int(last + avg)])
+        out.append(seq[int(last) : int(last + avg)])
         last += avg
 
     return out
@@ -38,16 +38,16 @@ def get_image(image_path):
     config = Config()
     size = config.THUMBNAIL_SIZE, config.THUMBNAIL_SIZE
     try:
-        img = Image.open(image_path, mode='r')
+        img = Image.open(image_path, mode="r")
     except FileNotFoundError:
         return None
     img.thumbnail(size, Image.LANCZOS)
     img_byte_arr = io.BytesIO()
     try:
-        img.save(img_byte_arr, format='JPEG')
+        img.save(img_byte_arr, format="JPEG")
     except OSError:
-        img.save(img_byte_arr, format='PNG')
-    encoded_img = base64.encodebytes(img_byte_arr.getvalue()).decode('ascii')
+        img.save(img_byte_arr, format="PNG")
+    encoded_img = base64.encodebytes(img_byte_arr.getvalue()).decode("ascii")
     return encoded_img
 
 
@@ -62,7 +62,7 @@ def dhash(image, hashSize=8):
     # column pixels
     diff = resized[:, 1:] > resized[:, :-1]
     # convert the difference image to a hash
-    return sum([2 ** i for (i, v) in enumerate(diff.flatten()) if v])
+    return sum([2**i for (i, v) in enumerate(diff.flatten()) if v])
 
 
 def convert_hash(h):
@@ -71,8 +71,9 @@ def convert_hash(h):
 
 
 def hamming(a, b):
-    """ Compute and return the Hamming distance between the integers
-    From: https://pyimagesearch.com/2019/08/26/building-an-image-hashing-search-engine-with-vp-trees-and-opencv/"""
+    """Compute and return the Hamming distance between the integers
+    From: https://pyimagesearch.com/2019/08/26/building-an-image-hashing-search-engine-with-vp-trees-and-opencv/
+    """
     return bin(int(a) ^ int(b)).count("1")
 
 
@@ -80,8 +81,7 @@ def chi2_distance(histA, histB, eps=1e-10):
     """
     From Adrian Rosebrock's Pyimagesearch
     """
-    d = 0.5 * np.sum([((a - b) ** 2) / (a + b + eps)
-        for (a, b) in zip(histA, histB)])
+    d = 0.5 * np.sum([((a - b) ** 2) / (a + b + eps) for (a, b) in zip(histA, histB)])
 
     return d
 
@@ -98,24 +98,24 @@ class OkapiTransformer(TransformerMixin, BaseEstimator):
 
     """
 
-    def __init__(self, *, norm='l2', use_idf=True, k1=1, k2=1, b=0.75):
-        self.norm    = norm
+    def __init__(self, *, norm="l2", use_idf=True, k1=1, k2=1, b=0.75):
+        self.norm = norm
         self.use_idf = use_idf
-        self.k1      = k1
-        self.k2      = k2
-        self.b       = b
+        self.k1 = k1
+        self.k2 = k2
+        self.b = b
 
     def fit(self, X, y=None):
         """
         Learn the idf vector (global term weights).
-        
+
         Parameters
         ----------
         X : sparse matrix of shape n_samples, n_features)
             A matrix of term/token counts.
         """
 
-        X = check_array(X, accept_sparse=('csr', 'csc'))
+        X = check_array(X, accept_sparse=("csr", "csc"))
         if not sp.issparse(X):
             X = sp.csr_matrix(X)
         dtype = X.dtype if X.dtype in FLOAT_DTYPES else np.float64
@@ -127,14 +127,14 @@ class OkapiTransformer(TransformerMixin, BaseEstimator):
             if not sp.issparse(df):
                 d["copy"] = False
             df = df.astype(dtype, **d)
-            idf = np.log( (n_samples - df + 0.5) / (df + 0.5))
+            idf = np.log((n_samples - df + 0.5) / (df + 0.5))
 
             self._idf_diag = sp.diags(
-                diagonals = idf, 
-                offsets   = 0,
-                shape     = (n_features, n_features),
-                format    = 'csr',
-                dtype     = dtype
+                diagonals=idf,
+                offsets=0,
+                shape=(n_features, n_features),
+                format="csr",
+                dtype=dtype,
             )
 
         return self
@@ -142,7 +142,7 @@ class OkapiTransformer(TransformerMixin, BaseEstimator):
     def transform(self, X, copy=True):
         """
         Transform a count matrix to a tf or tf-idf representation
-        
+
         Parameters
         ----------
         X : sparse matrix of (n_samples, n_features)
@@ -155,7 +155,7 @@ class OkapiTransformer(TransformerMixin, BaseEstimator):
         vectors : sparse matrix of shape (n_samples, n_features)
         """
 
-        X = check_array(X, accept_sparse='csr', dtype=FLOAT_DTYPES, copy=copy)
+        X = check_array(X, accept_sparse="csr", dtype=FLOAT_DTYPES, copy=copy)
         if not sp.issparse(X):
             X = sp.csr_matrix(X, dtype=np.float64)
 
@@ -167,11 +167,11 @@ class OkapiTransformer(TransformerMixin, BaseEstimator):
 
         # Document length: number of words per document
         dl = X.sum(axis=1)
-        
+
         # Number of non-zero elements in each row
         # Shape is (n_samples, )
         sz = X.indptr[1:] - X.indptr[0:-1]
-        
+
         # Number of words used to represent each document.
         # In each row, repeat `dl` for `sz` times
         # Example
@@ -180,14 +180,13 @@ class OkapiTransformer(TransformerMixin, BaseEstimator):
         # sz = [1, 2, 3]
         # rep = [4, 5, 5, 6, 6, 6]
         rep = np.repeat(np.asarray(dl), sz)
-        
+
         # Average document length
         avgdl = np.mean(dl)
         ######################################################################
 
-
         X.data *= self.k1
-        X.data /= (X.data + self.k2 * (1 - self.b + self.b * (rep / avgdl)))
+        X.data /= X.data + self.k2 * (1 - self.b + self.b * (rep / avgdl))
 
         return X
 
@@ -202,12 +201,8 @@ class OkapiTransformer(TransformerMixin, BaseEstimator):
         value = np.asarray(value, dtype=np.float64)
         n_features = value.shape[0]
         self._idf_diag = sp.spdiags(
-            value,
-            diags  = 0,
-            m      = n_features,
-            n      = n_features,
-            format = 'csr'
+            value, diags=0, m=n_features, n=n_features, format="csr"
         )
 
     def _more_tags(self):
-        return {'X_types': 'sparse'}
+        return {"X_types": "sparse"}

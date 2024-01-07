@@ -5,8 +5,8 @@
 # - sklearn.feature_extraction.image.extract_patches_2d
 # - HOG
 #
-# Also, do an inverted index file to hold the mapping of words to documents 
-# to quickly compute the similarity between a new image and all of the 
+# Also, do an inverted index file to hold the mapping of words to documents
+# to quickly compute the similarity between a new image and all of the
 # images in the database.
 
 
@@ -21,38 +21,37 @@ import numpy.typing as npt
 # Local imports
 from bag_of_visual_words import extract_bovw_features, train_bag_of_visual_words
 from config import Config
-from descriptors import (
-    DESCRIPTORS,
-    Describer
-)
+from descriptors import DESCRIPTORS, Describer
 
 
 def get_images_descriptions(
-    describer: Describer,
-    retrain: bool=False) -> dict[str, list[np.ndarray]]:
+    describer: Describer, retrain: bool = False
+) -> dict[str, list[np.ndarray]]:
     """
     Feature extraction
     """
 
     if config.DESCRIPTIONS_PATH.exists() and not retrain:
         logging.info("Loading descriptions from local file.")
-        descriptions_dict, = joblib.load(str(config.DESCRIPTIONS_PATH))
-    
+        (descriptions_dict,) = joblib.load(str(config.DESCRIPTIONS_PATH))
+
     else:
         logging.info("Recalculating descriptions.")
 
         if config.MULTIPROCESS:
-            descriptions_dict = describer.multiprocessed_descriptors_extraction(images_paths, n_jobs=config.N_JOBS)
+            descriptions_dict = describer.multiprocessed_descriptors_extraction(
+                images_paths, n_jobs=config.N_JOBS
+            )
         else:
             descriptions_dict = describer.generate_descriptions(images_paths)
-        
+
         # Descriptions are not really needed, but helps saving them while developing
         joblib.dump((descriptions_dict,), str(config.DESCRIPTIONS_PATH), compress=3)
-    
+
     return descriptions_dict
 
 
-def  main():
+def main():
     """
     Extract image features from all the images found in `config.DATA_FOLDER_PATH`.
     """
@@ -64,7 +63,6 @@ def  main():
     describer = Describer(DESCRIPTORS)
     descriptions_dict = get_images_descriptions(describer)
 
-
     ###########################################################################
     # Concatenate all the features obtained from one image
     ###########################################################################
@@ -74,7 +72,7 @@ def  main():
     clusterer, codebook, descriptions = train_bag_of_visual_words(images_paths)
     bovw_histogram, pipeline = extract_bovw_features(descriptions, codebook, clusterer)
     assert bovw_histogram.shape[0] == len(images_paths)
-    
+
     features.append(bovw_histogram)
 
     for descriptor_name, descriptions in descriptions_dict.items():
@@ -87,19 +85,21 @@ def  main():
     images_features = np.concatenate(features, axis=1)
 
     logging.info(f"Final shape of feature vector: {images_features.shape}.")
-    logging.info(f"Proportion of zeros in the feature vector: {(images_features < 01e-9).sum() / images_features.size:.3f}.")
+    logging.info(
+        f"Proportion of zeros in the feature vector: {(images_features < 01e-9).sum() / images_features.size:.3f}."
+    )
 
     # to_save = {
     #     'images_paths': images_paths,
     #     'images_features': images_features,
     # }
-    
+
     # if "corners" in descriptions_dict:
     #     if 'faiss' in str(clusterer.__class__):
     #         pass
     #     if 'sklearn' in str(clusterer.__class__):
     #         pass
-        
+
     #     to_save['codebook'] = codebook
     #     to_save['pipeline'] = pipeline
 
@@ -108,7 +108,7 @@ def  main():
     # elif isinstance(clusterer, MiniBatchKMeans):
     #     to_save['clusterer'] = clusterer
     #     joblib.dump(to_save, str(config.BOVW_PATH), compress=3)
-    
+
     logging.info("Done")
 
 
@@ -120,5 +120,5 @@ if __name__ == "__main__":
     images_paths = []
     for ext in config.EXTENSIONS:
         images_paths.extend(config.DATA_FOLDER_PATH.rglob(ext))
-    
+
     main()
