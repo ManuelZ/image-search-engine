@@ -120,7 +120,7 @@ class FaissKMeans:
         self.n_clusters = n_clusters
         self.n_init = n_init
         self.max_iter = max_iter
-        self.inertia_ = None
+        self.inertia_: float
         self.cluster_centers_: np.ndarray | None
         self.kmeans: faiss.Kmeans
 
@@ -233,8 +233,8 @@ def run_clustering(
         logging.info(
             f"Mean '{method}' score for {n_clusters} clusters: {mean_score:.3f} ± {std_score:.3f}"
         )
-        # Don't know yet how to get inertia from faiss
-        # logging.info(f"Total inertia of {clusterer.inertia_/1024:.1f} K")
+
+        logging.info(f"Total inertia: {clusterer.inertia_/1024:.1f} K")
 
         clustering_evaluator.evaluate(clusterer, mean_score, n_clusters)
 
