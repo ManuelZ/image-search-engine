@@ -41,7 +41,7 @@ class Describer:
 
         return descriptors
 
-    def generate_descriptions(self, images_paths, n=1) -> dict[str, list[np.ndarray]]:
+    def describe(self, images_paths, n=1) -> dict[str, list[np.ndarray]]:
         """
 
         Args:
@@ -80,7 +80,7 @@ class Describer:
 
         return extracted
 
-    def multiprocessed_descriptors_extraction(
+    def multiprocessed_describe(
         self, images_paths, n_jobs=4
     ) -> dict[str, list]:
         """
@@ -102,7 +102,7 @@ class Describer:
 
         results = [
             pool.apply_async(
-                func=self.generate_descriptions,
+                func=self.describe,
                 args=(paths, i),
                 callback=update_pbar,
                 error_callback=error_cb,

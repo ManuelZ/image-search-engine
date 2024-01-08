@@ -20,63 +20,75 @@ import numpy as np
 import numpy.typing as npt
 
 # Local imports
-from bag_of_visual_words import extract_bovw_features, train_bag_of_visual_words
 from config import Config
-from descriptors import DESCRIPTORS, Describer
+from utils import get_images_paths
+from bag_of_visual_words import (
+    generate_bovw_features_from_descriptions,
+    train_bag_of_visual_words_model,
+    save_bovw_model,
+)
+from descriptors import Describer, CornerDescriptor
 
 
-def get_images_descriptions(
-    describer: Describer, descriptions_path: Path, retrain: bool = False
-) -> dict[str, list[np.ndarray]]:
-    """
-    Feature extraction
-    """
+# TODO: currently it's used for extracting corners, make a different function for that and keep this general
+def describe_dataset(
+    describer: Describer, images_paths: list[Path]
+) -> list[np.ndarray]:
+    corner_descriptions_path = config.BOVW_CORNER_DESCRIPTIONS_PATH
 
-    if descriptions_path.exists() and not retrain:
-        logging.info("Loading descriptions from local file.")
-        (descriptions_dict,) = joblib.load(str(descriptions_path))
-
+    if corner_descriptions_path.exists():
+        logging.info("Loading dataset features from local file.")
+        descriptions_dict = joblib.load(str(corner_descriptions_path))
     else:
-        logging.info("Recalculating descriptions.")
+        logging.info("Extracting features from dataset.")
         if config.MULTIPROCESS:
-            descriptions_dict = describer.multiprocessed_descriptors_extraction(
+            descriptions_dict = describer.multiprocessed_describe(
                 images_paths, n_jobs=config.N_JOBS
             )
         else:
-            descriptions_dict = describer.generate_descriptions(images_paths)
+            descriptions_dict = describer.describe(images_paths)
 
-        # Descriptions are not really needed, but helps saving them while developing
-        joblib.dump((descriptions_dict,), str(descriptions_path), compress=3)
+        joblib.dump(descriptions_dict, str(corner_descriptions_path), compress=3)
 
-    return descriptions_dict
+    descriptions = descriptions_dict["corners"]
+
+    return descriptions
 
 
 def main():
     """
     Extract image features from all the images found in `config.DATA_FOLDER_PATH`.
     """
-
-    ###########################################################################
-    # Extract features from images
-    ###########################################################################
-
     features = []
 
-    # describer = Describer(DESCRIPTORS)
-    # descriptions_dict = get_images_descriptions(describer, config.DESCRIPTIONS_PATH)
-    descriptions_dict = {}
+    ###########################################################################
+    # Extract BOVW features
+    ###########################################################################
 
-    # Extract Bag Of Visual Words features
-    clusterer, codebook, descriptions = train_bag_of_visual_words(images_paths)
-    bovw_histogram, pipeline = extract_bovw_features(descriptions, codebook, clusterer)
-    print(f"bovw_histogram.shape: {bovw_histogram.shape}")
-    assert bovw_histogram.shape[0] == len(images_paths)
-    features.append(bovw_histogram)
+    describer = Describer({"corners": CornerDescriptor(config.CORNER_DESCRIPTOR)})
+
+    # Extract corner features
+    descriptions = describe_dataset(describer, images_paths)
+    index = train_bag_of_visual_words_model(descriptions)
+    bovw_histograms, pipeline = generate_bovw_features_from_descriptions(
+        descriptions, index
+    )
+    assert bovw_histograms.shape[0] == len(images_paths)
+    features.append(bovw_histograms)
+
+    np.save(config.BOVW_HISTOGRAMS_PATH, bovw_histograms)
+
+    ###########################################################################
+    # Extract other features
+    ###########################################################################
+
+    # ...
 
     ###########################################################################
     # Concatenate all the features obtained from one image
     ###########################################################################
 
+    descriptions_dict = {}
     for descriptor_name, descriptions in descriptions_dict.items():
         logging.info(f"Using descriptor '{descriptor_name}'")
         # descriptions: list of arrays of size (n,136)
@@ -86,32 +98,13 @@ def main():
 
     images_features = np.concatenate(features, axis=1)
 
-    logging.info(f"Final shape of feature vector: {images_features.shape}.")
+    logging.info(f"Shape of final feature vector: {images_features.shape}.")
     logging.info(
         f"Proportion of zeros in the feature vector: {(images_features < 01e-9).sum() / images_features.size:.3f}."
     )
-
-    # to_save = {
-    #     'images_paths': images_paths,
-    #     'images_features': images_features,
-    # }
-
-    # if "corners" in descriptions_dict:
-    #     if 'faiss' in str(clusterer.__class__):
-    #         pass
-    #     if 'sklearn' in str(clusterer.__class__):
-    #         pass
-
-    #     to_save['codebook'] = codebook
-    #     to_save['pipeline'] = pipeline
-
-    # if isinstance(clusterer, faiss.Kmeans):
-    #     faiss.write_index(index, str())
-    # elif isinstance(clusterer, MiniBatchKMeans):
-    #     to_save['clusterer'] = clusterer
-    #     joblib.dump(to_save, str(config.BOVW_PATH), compress=3)
-
-    logging.info("Done")
+    logging.info("Saving Bag of Visual Words model...")
+    save_bovw_model(index, pipeline)
+    logging.info("Done.")
 
 
 if __name__ == "__main__":
@@ -119,8 +112,6 @@ if __name__ == "__main__":
 
     logging.basicConfig(format=config.LOGGING_FORMAT, level=config.LOGGING_LEVEL)
 
-    images_paths = []
-    for ext in config.EXTENSIONS:
-        images_paths.extend(config.DATA_FOLDER_PATH.rglob(ext))
+    images_paths = get_images_paths()
 
     main()

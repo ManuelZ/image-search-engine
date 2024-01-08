@@ -1,6 +1,7 @@
 # Built-in imports
 import base64
 import io
+from pathlib import Path
 
 # External imports
 import numpy as np
@@ -10,6 +11,7 @@ import scipy.sparse as sp
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.feature_extraction.text import _document_frequency
 from sklearn.utils.validation import check_array, FLOAT_DTYPES
+import faiss
 
 # Local imports
 from config import Config
@@ -206,3 +208,17 @@ class OkapiTransformer(TransformerMixin, BaseEstimator):
 
     def _more_tags(self):
         return {"X_types": "sparse"}
+
+
+def get_images_paths() -> list[Path]:
+    """
+    Get all the images paths from `config.DATA_FOLDER_PATH`.
+    """
+    config = Config()
+
+    images_paths = []
+    for ext in config.EXTENSIONS:
+        images_paths.extend(config.DATA_FOLDER_PATH.rglob(ext))
+
+    return images_paths
+
