@@ -13,10 +13,12 @@ from imutils import resize
 import skimage.transform
 import matplotlib.pyplot as plt
 import joblib
+from joblib import Parallel, delayed
 
 # Local imports
 from utils import dhash, chunkIt
 from config import Config
+from joblib import parallel_config
 
 
 class SupportsDescribe(Protocol):
@@ -89,47 +91,6 @@ class Describer:
 
         return extracted
 
-    def multiprocessed_describe(self, images_paths, n_jobs=4) -> dict[str, list]:
-        """
-        Extract images' descriptions using multiple processes.
-        """
-
-        pbar = tqdm(total=len(images_paths))
-
-        # https://github.com/tqdm/tqdm#nested-progress-bars
-        pool = mp.Pool(processes=n_jobs)
-        paths_chunks = chunkIt(images_paths, n_jobs * 16)
-
-        def update_pbar(x):
-            num_images = len(list(x.values())[0])
-            pbar.update(num_images)
-
-        def error_cb(x):
-            print(f"Error while applying async function: ", x)
-
-        results = [
-            pool.apply_async(
-                func=self.describe,
-                args=(paths, i, True),  # multiprocess=True
-                callback=update_pbar,
-                error_callback=error_cb,
-            )
-            for i, paths in enumerate(paths_chunks)
-        ]
-
-        pool.close()
-
-        extracted = defaultdict(list)
-        for r in results:
-            # Each .get() call blocks until the applied function is completed
-            output = r.get()
-
-            for d_name in self.descriptors.keys():
-                extracted[d_name].extend(output[d_name])
-
-        print("All feature extraction processes finished.")
-        return extracted
-
 
 # TODO: currently it's used for extracting corners, make a different function for that and keep this general
 def describe_dataset(
@@ -137,24 +98,29 @@ def describe_dataset(
 ) -> list[np.ndarray]:
     """ """
 
+    n_jobs = 1 if prediction else config.N_JOBS
+
     corner_descriptions_path = config.BOVW_CORNER_DESCRIPTIONS_PATH
+    paths_chunks = chunkIt(images_paths, n_jobs * 16)
 
     if corner_descriptions_path.exists() and not prediction:
         print("Loading dataset features from local file.")
-        descriptions_dict = joblib.load(str(corner_descriptions_path))
+        descriptions = joblib.load(str(corner_descriptions_path))
+
     else:
         print(f"Extracting features from dataset of {images_paths.shape[0]} images")
-        if config.N_JOBS > 1 and not prediction:
-            descriptions_dict = describer.multiprocessed_describe(
-                images_paths, n_jobs=config.N_JOBS
+        with parallel_config(backend="threading", n_jobs=n_jobs):
+            list_of_dicts = Parallel()(
+                delayed(describer.describe)(paths, i, n_jobs > 1)
+                for i, paths in enumerate(paths_chunks)
             )
-        else:
-            descriptions_dict = describer.describe(images_paths)
+
+        descriptions = []
+        for d in list_of_dicts:
+            descriptions.extend(d["corners"])
 
         if not prediction:
-            joblib.dump(descriptions_dict, str(corner_descriptions_path), compress=3)
-
-    descriptions = descriptions_dict["corners"]
+            joblib.dump(descriptions, str(corner_descriptions_path), compress=3)
 
     return descriptions
 

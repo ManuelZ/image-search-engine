@@ -68,7 +68,7 @@ def predict():
     predictions = run_image_query(image_features, config.NUM_IMAGES_TO_RETURN)
     end = time.time()
 
-    print(f"Took {end - start:.1f} seconds.")
+    print(f"Took {end - start:.2f} seconds.")
 
     return Response(
         response=json.dumps({"prediction": predictions}),
