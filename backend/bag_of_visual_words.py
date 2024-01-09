@@ -30,7 +30,6 @@ from joblib import Parallel, delayed
 from joblib import parallel_config
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import make_scorer
 from sklearn.base import BaseEstimator
 import pandas as pd
 
@@ -38,26 +37,10 @@ import pandas as pd
 from utils import OkapiTransformer
 from utils import chunkIt
 from config import Config
-from descriptors import Describer, CornerDescriptor, describe_dataset
+from descriptors import Describer, describe_dataset
 from kmeans_faiss import FaissKMeans
 
 rs = np.random.RandomState(42)
-
-
-class SupportsFit(Protocol):
-    def fit(self, X: np.ndarray, y: np.ndarray | None = None) -> None:
-        ...
-
-
-class SupportsTransform(Protocol):
-    def transform(self, X: np.ndarray) -> np.ndarray:
-        ...
-
-
-class SKLearnKMeansLike(SupportsFit, SupportsTransform, Protocol):
-    cluster_centers_: np.ndarray
-    n_clusters: int
-    ...
 
 
 config = Config()
