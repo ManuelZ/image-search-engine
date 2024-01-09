@@ -135,6 +135,8 @@ class Describer:
 def describe_dataset(
     describer: Describer, images_paths: np.ndarray, prediction=False
 ) -> list[np.ndarray]:
+    """ """
+
     corner_descriptions_path = config.BOVW_CORNER_DESCRIPTIONS_PATH
 
     if corner_descriptions_path.exists() and not prediction:
@@ -142,7 +144,7 @@ def describe_dataset(
         descriptions_dict = joblib.load(str(corner_descriptions_path))
     else:
         print(f"Extracting features from dataset of {images_paths.shape[0]} images")
-        if config.MULTIPROCESS and not prediction:
+        if config.N_JOBS > 1 and not prediction:
             descriptions_dict = describer.multiprocessed_describe(
                 images_paths, n_jobs=config.N_JOBS
             )

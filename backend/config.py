@@ -6,8 +6,6 @@ import logging
 class Config:
     NUM_IMAGES_TO_RETURN = 10
 
-    MULTIPROCESS = True
-
     N_JOBS = 4
 
     DATA_FOLDER_PATH = Path(r"F:\DATASETS\102 Flowers dataset\102flowers\jpg")

@@ -101,16 +101,15 @@ class BOVW(BaseEstimator):
         else:
             descriptions = self.descriptions
 
-        if config.MULTIPROCESS:
-            descriptions_chunks = chunkIt(descriptions, config.N_JOBS)
-            with parallel_config(backend="threading", n_jobs=config.N_JOBS):
-                list_of_histograms = Parallel()(
-                    delayed(create_visual_word_histogram)(des)
-                    for des in descriptions_chunks
-                )
-            clusters_histograms = np.concatenate(list_of_histograms)
-        else:
-            clusters_histograms = create_visual_word_histogram(descriptions)
+        descriptions_chunks = chunkIt(descriptions, config.N_JOBS)
+        with parallel_config(backend="threading", n_jobs=config.N_JOBS):
+            clusters_histograms = Parallel()(
+                delayed(create_visual_word_histogram)(des)
+                for des in descriptions_chunks
+            )
+
+        if isinstance(clusters_histograms, list):
+            clusters_histograms = np.concatenate(clusters_histograms)
 
         return clusters_histograms
 

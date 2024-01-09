@@ -28,10 +28,9 @@ from descriptors import Describer, CornerDescriptor, describe_dataset
 
 def main(images_paths):
     """ """
-    features = []
-
     ###########################################################################
-    # Pre-calculate and save corner descriptions
+    # Pre-calculate and save corner descriptions so that they can be loaded in
+    # each parallel Cross-Validation process.
     ###########################################################################
     describer = Describer({"corners": CornerDescriptor(config.CORNER_DESCRIPTOR)})
     images_paths = np.array(images_paths).reshape(-1, 1)
