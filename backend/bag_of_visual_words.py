@@ -339,12 +339,7 @@ def generate_bovw_feature(image_path: Path, pipeline: Pipeline):
     returned by predict represents the index of the closest cluster
     center in the code book.
     """
-    # clusters_idxs = clusterer.transform(description)
-    # n_clusters = clusterer.n_clusters
 
-    # Histogram of image descriptor values
-    # query_im_histogram, _ = np.histogram(clusters_idxs, bins=n_clusters)
-    # query_im_histogram = query_im_histogram.reshape(1, -1)
     X = np.array([image_path])
     bovw_histogram = pipeline.transform(X).todense()
     return bovw_histogram
