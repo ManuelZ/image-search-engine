@@ -39,16 +39,6 @@ from kmeans_faiss import FaissKMeans
 config = Config()
 
 
-def run_clustering(
-    descriptions_list: list[np.ndarray],
-    n_clusters: int,
-):
-    clusterer = FaissKMeans(n_clusters)
-    descriptions = np.concatenate(descriptions_list, axis=0)
-    clusterer.fit(descriptions)
-    return clusterer
-
-
 class BOVW(BaseEstimator):
     """
     Bag of Visual Words modelling.
@@ -72,6 +62,7 @@ class BOVW(BaseEstimator):
         self.describer: Describer = describer
         self.n_clusters: int = n_clusters
         self.clusterer: FaissKMeans
+        self.descriptions: list[np.ndarray]
 
     def fit(self, X: np.ndarray, y=None):
         """
@@ -126,6 +117,18 @@ class BOVW(BaseEstimator):
     def fit_transform(self, X: np.ndarray, y=None):
         self.fit(X)
         return self.transform(X)
+
+
+def run_clustering(
+    descriptions: list[np.ndarray],
+    n_clusters: int,
+):
+    """ """
+
+    descriptions_arr = np.concatenate(descriptions, axis=0)
+    clusterer = FaissKMeans(n_clusters)
+    clusterer.fit(descriptions_arr)
+    return clusterer
 
 
 def train_bovw_model(images_paths: np.ndarray, describer: Describer):
