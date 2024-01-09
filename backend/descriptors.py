@@ -162,17 +162,17 @@ class CornerDescriptor:
     TODO: explain what is returned
     """
 
-    def __init__(self, kind="sift"):
-        self.kind = kind
+    def __init__(self, name="sift"):
+        self.name = name
 
-        if kind == "brisk":
-            self.extractor = cv2.BRISK_create(thresh=30)
+        if self.name == "brisk":
+            self.extractor = cv2.BRISK.create(thresh=30)
 
-        elif kind == "sift":
-            # Shape: n_keypoints x 128
-            self.extractor = cv2.SIFT_create()
+        elif self.name == "sift":
+            # Creates an array of n_keypoints x nfeatures
+            self.extractor = cv2.SIFT.create(nfeatures=128)
 
-    def describe(self, image: np.ndarray, visualize: bool = False) -> np.ndarray:
+    def describe(self, image: np.ndarray) -> np.ndarray:
         """
         Args:
             image: 2 channels gray uint8 image in range 0-255
@@ -186,11 +186,11 @@ class CornerDescriptor:
             image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
             image = img_as_ubyte(image)
 
-        if self.kind in ["brisk", "sift"]:
+        if self.name in ["brisk", "sift"]:
             kp, des = self.extractor.detectAndCompute(image, mask=None)
 
-        elif self.kind == "daisy":
-            result = feature.daisy(
+        elif self.name == "daisy":
+            des = feature.daisy(
                 image=image,
                 step=32,  # Distance between descriptor sampling points.
                 radius=32,  # Radius (in pixels) of the outermost ring.
@@ -198,13 +198,7 @@ class CornerDescriptor:
                 histograms=8,
                 orientations=8,
                 normalization="daisy",  # 'l1', 'l2', 'daisy', 'off'
-                visualize=visualize,  # Put to True and uncomment below the plotting code
             )
-
-            if visualize:
-                des, des_img = result
-            else:
-                des = result
 
             # - The number of daisy descriptors return depends on the size of the image,
             #   the step and radius.
@@ -332,7 +326,7 @@ def show_descriptors_on_image():
     image = img_as_ubyte(image)
 
     descriptor = CornerDescriptor("daisy")
-    des, des_img = descriptor.describe(image, visualize=True)
+    des, des_img = descriptor.describe(image)
 
     fig, ax = plt.subplots()
     ax.axis("off")
