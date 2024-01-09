@@ -12,12 +12,10 @@ References:
 """
 
 # Built-in imports
-import time
-import random
 import logging
-from collections import defaultdict
 from pathlib import Path
 from typing import Protocol
+from tempfile import mkdtemp
 
 # External imports
 import numpy as np
@@ -28,11 +26,21 @@ from sklearn.metrics import calinski_harabasz_score
 from sklearn.pipeline import Pipeline
 import faiss
 import joblib
+from joblib import Parallel, delayed
+from joblib import parallel_config
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import make_scorer
+from sklearn.base import BaseEstimator
+import pandas as pd
 
 # Local imports
 from utils import OkapiTransformer
+from utils import chunkIt
 from config import Config
-from descriptors import Describer, CornerDescriptor
+from descriptors import Describer, CornerDescriptor, describe_dataset
+
+rs = np.random.RandomState(42)
 
 
 class SupportsFit(Protocol):
@@ -40,13 +48,14 @@ class SupportsFit(Protocol):
         ...
 
 
-class SupportsPredict(Protocol):
-    def predict(self, X: np.ndarray) -> np.ndarray:
+class SupportsTransform(Protocol):
+    def transform(self, X: np.ndarray) -> np.ndarray:
         ...
 
 
-class SKLearnKMeansLike(SupportsFit, SupportsPredict, Protocol):
+class SKLearnKMeansLike(SupportsFit, SupportsTransform, Protocol):
     cluster_centers_: np.ndarray
+    n_clusters: int
     ...
 
 
@@ -134,9 +143,7 @@ class FaissKMeans:
         nredo: run the clustering this number of times, and keep the best centroids (selected according to clustering objective)
         """
 
-        # TODO: If you want to explore if it is possible to use a different index,
-        # use faiss.Clustering
-        # But I don't really know if that is neccesary
+        # Also can use faiss.Clustering
         self.kmeans = faiss.Kmeans(
             seed=42,
             d=int(X.shape[1]),
@@ -154,7 +161,7 @@ class FaissKMeans:
         self.cluster_centers_ = self.kmeans.centroids
         self.inertia_ = self.kmeans.obj[-1]
 
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def transform(self, X: np.ndarray) -> np.ndarray:
         """ """
         # I: The nearest centroid for each line vector in x.
         L2_distances, I = self.index.search(X.astype(np.float32), 1)  # type: ignore
@@ -201,135 +208,76 @@ class ClusteringEvaluator:
 
 def run_clustering(
     descriptions_list: list[np.ndarray],
-    clustering_config: ClusteringConfig,
-    clustering_evaluator: ClusteringEvaluator,
+    n_clusters: int,
 ):
-    method = config.CLUSTER_EVAL_METHOD
-    sample_size = config.CLUSTER_EVAL_SAMPLE_SIZE
-    n_samples = config.CLUSTER_EVAL_N_SAMPLES
-
-    results = defaultdict(list)
-
-    for n_clusters in clustering_config.range_clusters:
-        start = time.time()
-
-        # To load centroids in MiniBatchKMeans, pass them in the parameter `init`
-        # clusterer = MiniBatchKMeans(
-        #     n_clusters = n_clusters,
-        #     random_state = 42,
-        #     max_iter = 100,
-        #     batch_size = clustering_config.batch_size,
-        #     verbose = 0,
-        #     tol = 0, # tune this
-        #     max_no_improvement = 5,
-        #     n_init = 3
-        # )
-
-        clusterer = FaissKMeans(n_clusters)
-
-        # One row over the other
-        descriptions = np.concatenate(descriptions_list, axis=0)
-
-        clusterer.fit(descriptions)
-
-        end = time.time()
-
-        logging.info(f"Finished running KMeans. Took {end - start:.1f} sec.")
-
-        cluster_evaluation_scores = calc_sampled_cluster_score(
-            clusterer, descriptions, sample_size, n_samples, method
-        )
-
-        mean_score = np.mean(cluster_evaluation_scores[method])
-        std_score = np.std(cluster_evaluation_scores[method], ddof=1)
-
-        logging.info(
-            f"Mean '{method}' score for {n_clusters} clusters: {mean_score:.3f} ± {std_score:.3f}"
-        )
-
-        logging.info(f"Total inertia: {clusterer.inertia_/1024:.1f} K")
-
-        clustering_evaluator.evaluate(clusterer, mean_score, n_clusters)
-
-        # Save information of this run
-        results["method"].append(method)
-        results["n_clusters"].append(n_clusters)
-        results["score"].append(mean_score)
-        results["inertia"].append(clusterer.inertia_)
-        results["time"].append(end - start)
-        results["silhouette"].append(np.mean(cluster_evaluation_scores["silhouette"]))
-        results["davies-bouldin"].append(
-            np.mean(cluster_evaluation_scores["davies-bouldin"])
-        )
-        results["calinski-harabasz"].append(
-            np.mean(cluster_evaluation_scores["calinski-harabasz"])
-        )
-
-    logging.info(
-        f"Kmeans selected number of clusters: {clustering_evaluator.best_n_clusters}."
-    )
-
-    return results
+    clusterer = FaissKMeans(n_clusters)
+    descriptions = np.concatenate(descriptions_list, axis=0)
+    clusterer.fit(descriptions)
+    return clusterer
 
 
-class BOVW:
-    def __init__(self, n_clusters):
-        self.n_clusters = n_clusters
+class BOVW(BaseEstimator):
+    def __init__(self, describer, n_clusters=10):
+        self.describer: Describer = describer
+        self.n_clusters: int = n_clusters
+        self.clusterer: FaissKMeans
 
-    def fit(self):
-        pass
-
-    def predict(self, X: np.ndarray):
+    def fit(self, X: np.ndarray, y=None):
         """
-        X: clusters indices
+        X: file paths
         """
-        values, _ = np.histogram(X, bins=self.n_clusters)
-        return values
+        self.descriptions = describe_dataset(self.describer, X)
+        self.clusterer = run_clustering(self.descriptions, self.n_clusters)
+        return self
 
+    def transform(self, X: np.ndarray, y=None):
+        def clusterize_and_quantize(descriptions: list[np.ndarray]):
+            """
+            Create a dictionary of visual words (visual vocabulary, codebook) out of
+            the given descriptions. Instead of having an infinite number of possible
+            points in the space, reduce the possibilities to a certain fixed number of
+            clusters.
 
-def create_codebook(
-    descriptions: list[np.ndarray],
-) -> dict:
-    """
-    Create a dictionary of visual words (visual vocabulary, codebook) out of
-    the given descriptions. Instead of having an infinite number of possible
-    points in the space, reduce the possibilities to a certain fixed number of
-    clusters.
+            How to choose vocabulary size (number of clusters)?
+            - Too small: visual words not representative of all patches
+            - Too large: quantization artifacts, overfitting
 
-    How to choose vocabulary size (number of clusters)?
-    - Too small: visual words not representative of all patches
-    - Too large: quantization artifacts, overfitting
+            """
 
-    Args:
-        descriptions:
-    """
+            clusters_histograms = np.zeros((len(descriptions), self.n_clusters))
+            for i, X in enumerate(descriptions):
+                clusters_indexes = self.clusterer.transform(X)
+                values, _ = np.histogram(clusters_indexes, bins=self.n_clusters)
+                clusters_histograms[i] = values
 
-    clustering_config = ClusteringConfig(config, len(descriptions))
-    clustering_evaluator = ClusteringEvaluator(config.CLUSTER_EVAL_METHOD)
+            return clusters_histograms
 
-    results = run_clustering(descriptions, clustering_config, clustering_evaluator)
+        if self.descriptions is None:
+            descriptions = describe_dataset(self.describer, X, prediction=True)
+        else:
+            descriptions = self.descriptions
 
-    if len(clustering_config.range_clusters) > 1:
-        plot_results(results)
+        if config.MULTIPROCESS:
+            descriptions_chunks = chunkIt(descriptions, config.N_JOBS)
+            with parallel_config(backend="threading", n_jobs=config.N_JOBS):
+                list_of_histograms = Parallel()(
+                    delayed(clusterize_and_quantize)(des) for des in descriptions_chunks
+                )
+            clusters_histograms = np.concatenate(list_of_histograms)
+        else:
+            clusters_histograms = clusterize_and_quantize(descriptions)
 
-    best_clusterer = clustering_evaluator.best_clusterer
+        return clusters_histograms
 
-    # The Codebook has the coordinates of the clusters' centers
-    # Shape: n_clusters x N, where N is the descriptor size
-    codebook = best_clusterer.cluster_centers_
-
-    r = {
-        "clusterer": best_clusterer,
-        "codebook": codebook,
-    }
-    if isinstance(best_clusterer, FaissKMeans):
-        r["index"] = best_clusterer.kmeans.index
-
-    return r
+    def fit_transform(self, X: np.ndarray, y=None):
+        self.fit(X)
+        return self.transform(X)
 
 
 def calc_sampled_cluster_score(
-    clusterer, descriptors: np.ndarray, sample_size: int, repeat: int, eval_method: str
+    estimator,
+    X,
+    y=None,
 ):
     """
     Calculate an evaluation score of this KMeans trained instance in a sample
@@ -355,56 +303,58 @@ def calc_sampled_cluster_score(
         of inter-cluster dispersion for all clusters
         (where dispersion is defined as the sum of distances squared).
     """
+    scoring_func = davies_bouldin_score
+    # sign = 1 if greater_is_better else -1
+    # for davies_bouldin_score, the minimum score is zero,
+    # with lower values indicating better clustering.
+    sign = -1
 
-    dataset_size = descriptors.shape[0]
-    sample_size = np.min([dataset_size, sample_size])
-    logging.info(f"Calculating mean sampled (n={sample_size}) '{eval_method}' score...")
+    bovw = estimator.named_steps["bovw"]
+    all_descriptions = np.concatenate(bovw.descriptions)
 
-    scores = {
-        "silhouette": [],
-        "davies-bouldin": [],
-        "calinski-harabasz": [],
-    }
+    # Assign each description to a cluster
+    kmeans = bovw.clusterer
+    labels_ = kmeans.transform(all_descriptions).ravel()
 
-    for _ in range(repeat):
-        sample_idxs = random.sample(range(dataset_size), sample_size)
-        descriptors_sample = descriptors[sample_idxs, :]
-        cluster_idx_sample = clusterer.predict(descriptors_sample).ravel()
+    dataset_size = all_descriptions.shape[0]
+    sample_size = np.min([dataset_size, config.CLUSTER_EVAL_SAMPLE_SIZE])
+    logging.info(
+        f"Calculating mean sampled (n={sample_size}) 'davies_bouldin_score' score..."
+    )
 
-        scores["silhouette"].append(
-            silhouette_score(descriptors_sample, cluster_idx_sample)
-        )
-        scores["davies-bouldin"].append(
-            davies_bouldin_score(descriptors_sample, cluster_idx_sample)
-        )
-        scores["calinski-harabasz"].append(
-            calinski_harabasz_score(descriptors_sample, cluster_idx_sample)
-        )
+    scores = []
+    for _ in range(config.CLUSTER_EVAL_N_SAMPLES):
+        sample_idxs = rs.choice(dataset_size, size=sample_size, replace=False)
+        X_sample = all_descriptions[sample_idxs]
+        labels_sample = labels_[sample_idxs]
+        scores.append(scoring_func(X_sample, labels_sample))
 
-    return scores
+    return sign * np.mean(scores)
 
 
-def generate_bovw_feature(clusterer, pipeline, description):
+def generate_bovw_feature(image_path: Path, pipeline: Pipeline):
     """
     Quantize the image descriptor.
     Predict the closest cluster that each sample belongs to. Each value
     returned by predict represents the index of the closest cluster
     center in the code book.
     """
-    clusters_idxs = clusterer.predict(description)
-    n_clusters = clusterer.n_clusters
+    # clusters_idxs = clusterer.transform(description)
+    # n_clusters = clusterer.n_clusters
 
     # Histogram of image descriptor values
-    query_im_histogram, _ = np.histogram(clusters_idxs, bins=n_clusters)
-    query_im_histogram = query_im_histogram.reshape(1, -1)
-    bovw_histogram = pipeline.transform(query_im_histogram).todense()
-
+    # query_im_histogram, _ = np.histogram(clusters_idxs, bins=n_clusters)
+    # query_im_histogram = query_im_histogram.reshape(1, -1)
+    X = np.array([image_path])
+    bovw_histogram = pipeline.transform(X).todense()
     return bovw_histogram
 
 
 def generate_bovw_features_from_descriptions(
-    descriptions: list[np.ndarray], index
-) -> tuple[np.ndarray, Pipeline]:
+    images_paths: np.ndarray,
+):
+    print(f"Received {images_paths.shape[0]} images to process")
+
     ###########################################################################
     # Image modeling
     ###########################################################################
@@ -413,71 +363,88 @@ def generate_bovw_features_from_descriptions(
     # 1) For each feature vector of an image, find the cluster index to which it
     #    belongs.
     # 2) Create a histogram where the frequency of each cluster index is tracked
-
-    clusterer = load_cluster_model(index)
-
-    n_clusters = clusterer.n_clusters
-    clusters_histograms = np.zeros((len(descriptions), n_clusters))
-    for i, des in enumerate(descriptions):
-        clusters_idxs = clusterer.predict(des)
-        values, _ = np.histogram(clusters_idxs, bins=n_clusters)
-        clusters_histograms[i] = values
-
+    describer = Describer({"corners": CornerDescriptor(config.CORNER_DESCRIPTOR)})
     pipeline = Pipeline(
         [
-            # Transform a count matrix to a normalized tf or tf-idf representation
+            ("bovw", BOVW(describer)),
             ("tfidf", OkapiTransformer()),
-        ]
+        ],
     )
 
-    # <class 'scipy.sparse._csr.csr_matrix'>
-    bovw_histograms = pipeline.fit_transform(clusters_histograms).toarray()
+    clusters_to_test = np.unique(
+        np.linspace(
+            config.MIN_NUM_CLUSTERS,
+            config.MAX_NUM_CLUSTERS,
+            config.NUM_CLUSTERS_TO_TEST,
+        )
+        .round()
+        .astype(int)
+    )
 
-    logging.info(f"Histogram shape: {bovw_histograms.shape}.")
-    # Shape: (n_images, n_clusters)
+    parameter_grid = {
+        "bovw__n_clusters": clusters_to_test,  # e.g. [1, 10, 1000]
+    }
 
-    return bovw_histograms, pipeline
+    search = GridSearchCV(
+        estimator=pipeline,
+        param_grid=parameter_grid,
+        n_jobs=config.N_JOBS,
+        verbose=1,
+        scoring=calc_sampled_cluster_score,
+    )
+
+    search.fit(images_paths)
+    results_df = pd.DataFrame(search.cv_results_)
+
+    print(f"Search finished.")
+    print(f"Best score: {search.best_score_:.3f}")
+    print(f"Best parameters: {search.best_params_}")
+    print(f"Detailed results:")
+    print(results_df)
+
+    best_pipeline = search.best_estimator_
+
+    bovw_histograms = best_pipeline.transform(images_paths).todense()
+
+    print(f"Preparing search index...")
+    index = faiss.IndexFlatL2(bovw_histograms.shape[1])
+    index.add(bovw_histograms)
+    print(f"There are {index.ntotal} images in the index.")
+
+    save_indexes_and_pipeline(
+        best_pipeline.named_steps["bovw"].clusterer.index,
+        index,
+        best_pipeline,
+    )
 
 
-def extract_features(image, clusterer, pipeline):
+def extract_features(image_path: Path, pipeline: Pipeline):
     """ """
-    descriptor = CornerDescriptor(config.CORNER_DESCRIPTOR)
-    description = descriptor.describe(image)
-    bovw_histogram = generate_bovw_feature(clusterer, pipeline, description)
+    bovw_histogram = generate_bovw_feature(image_path, pipeline)
     return bovw_histogram
 
 
-def train_bag_of_visual_words_model(
-    descriptions,
-) -> tuple[list[np.ndarray], faiss.IndexFlatL2 | faiss.IndexFlatIP]:
-    """
-    Extract features from
-    """
-
-    # The cluster centroids (codebook) are the dictionary of visual words
-    r = create_codebook(descriptions)
-    clusterer = r["clusterer"]
-    index = r.get("index", None)
-
-    return index
-
-
-def load_cluster_model(index: str | Path | faiss.IndexFlatIP | faiss.IndexFlatL2):
+def load_cluster_model(
+    n_clusters: int,
+    index: None | str | Path | faiss.IndexFlatIP | faiss.IndexFlatL2 = None,
+):
     """ """
-    # centroids = np.load("centroids.npy")
-    # n_clusters = centroids.shape[0]
-
     if isinstance(index, (str, Path)):
         index = faiss.read_index(str(index))
 
-    clusterer = FaissKMeans(index=index)
+    clusterer = FaissKMeans(n_clusters=n_clusters, index=index)
     return clusterer
 
 
-def save_bovw_model(index, pipeline: Pipeline):
-    faiss.write_index(index, str(config.BOVW_INDEX_PATH))
-    joblib.dump(pipeline, str(config.BOVW_PIPELINE_PATH), compress=3)
+def save_indexes_and_pipeline(kmeans_index, index, pipeline: Pipeline):
+    """"""
+    print("Saving KMeans index", kmeans_index)
+    faiss.write_index(kmeans_index, str(config.BOVW_KMEANS_INDEX_PATH))
 
-    # with open("centroids.npy", 'wb') as f:
-    #     np.save(f, kmeans.centroids)
-    # joblib.dump(codebook, str(config.BOVW_CODEBOOK_PATH), compress=3)
+    print("Saving final index", index)
+    faiss.write_index(index, str(config.BOVW_INDEX_PATH))
+
+    print("Saving pipeline", pipeline)
+    # Delete faiss kmeans because it can't be pickled
+    pipeline.named_steps["bovw"].clusterer = None
+    joblib.dump(pipeline, str(config.BOVW_PIPELINE_PATH), compress=3)

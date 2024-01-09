@@ -12,6 +12,7 @@ from skimage.util import img_as_ubyte
 from imutils import resize
 import skimage.transform
 import matplotlib.pyplot as plt
+import joblib
 
 # Local imports
 from utils import dhash, chunkIt
@@ -41,7 +42,9 @@ class Describer:
 
         return descriptors
 
-    def describe(self, images_paths, n=1) -> dict[str, list[np.ndarray]]:
+    def describe(
+        self, images_paths, n=1, multiprocess=False
+    ) -> dict[str, list[np.ndarray]]:
         """
 
         Args:
@@ -56,7 +59,10 @@ class Describer:
 
         extracted: dict[str, list[np.ndarray]] = defaultdict(list)
 
-        for img_path in images_paths:
+        if not multiprocess:
+            pbar = tqdm(total=len(images_paths))
+
+        for img_path in images_paths.ravel().tolist():
             image = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
             image = resize(image, width=config.RESIZE_WIDTH)
             image = img_as_ubyte(image)
@@ -78,11 +84,12 @@ class Describer:
                     print(f"Trouble describing image {img_path}\n {e}")
                     continue
 
+            if not multiprocess:
+                pbar.update(1)
+
         return extracted
 
-    def multiprocessed_describe(
-        self, images_paths, n_jobs=4
-    ) -> dict[str, list]:
+    def multiprocessed_describe(self, images_paths, n_jobs=4) -> dict[str, list]:
         """
         Extract images' descriptions using multiple processes.
         """
@@ -103,7 +110,7 @@ class Describer:
         results = [
             pool.apply_async(
                 func=self.describe,
-                args=(paths, i),
+                args=(paths, i, True),  # multiprocess=True
                 callback=update_pbar,
                 error_callback=error_cb,
             )
@@ -122,6 +129,32 @@ class Describer:
 
         print("All feature extraction processes finished.")
         return extracted
+
+
+# TODO: currently it's used for extracting corners, make a different function for that and keep this general
+def describe_dataset(
+    describer: Describer, images_paths: np.ndarray, prediction=False
+) -> list[np.ndarray]:
+    corner_descriptions_path = config.BOVW_CORNER_DESCRIPTIONS_PATH
+
+    if corner_descriptions_path.exists() and not prediction:
+        print("Loading dataset features from local file.")
+        descriptions_dict = joblib.load(str(corner_descriptions_path))
+    else:
+        print(f"Extracting features from dataset of {images_paths.shape[0]} images")
+        if config.MULTIPROCESS and not prediction:
+            descriptions_dict = describer.multiprocessed_describe(
+                images_paths, n_jobs=config.N_JOBS
+            )
+        else:
+            descriptions_dict = describer.describe(images_paths)
+
+        if not prediction:
+            joblib.dump(descriptions_dict, str(corner_descriptions_path), compress=3)
+
+    descriptions = descriptions_dict["corners"]
+
+    return descriptions
 
 
 class CornerDescriptor:

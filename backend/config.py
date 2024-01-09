@@ -8,18 +8,18 @@ class Config:
 
     MULTIPROCESS = True
 
-    N_JOBS = 6
+    N_JOBS = 4
 
     DATA_FOLDER_PATH = Path(r"F:\DATASETS\102 Flowers dataset\102flowers\jpg")
 
     # Path towards saved descriptions of images
     DESCRIPTIONS_PATH = Path("descriptions.joblib")
 
-    BOVW_CODEBOOK_PATH = Path("bovw_codebook.joblib")
-    BOVW_PIPELINE_PATH = Path("bovw_pipeline.joblib")
-    BOVW_CORNER_DESCRIPTIONS_PATH = Path("bovw_corner_descriptions.joblib")
-    BOVW_HISTOGRAMS_PATH = Path("bovw_histograms.npy")
-    BOVW_INDEX_PATH = Path("index.index")
+    MODELS_BASE_PATH = Path("models")
+    BOVW_CORNER_DESCRIPTIONS_PATH = MODELS_BASE_PATH / "bovw_corner_descriptions.joblib"
+    BOVW_KMEANS_INDEX_PATH = MODELS_BASE_PATH / "bovw_kmeans_index.faiss"
+    BOVW_PIPELINE_PATH = MODELS_BASE_PATH / "bovw_pipeline.joblib"
+    BOVW_INDEX_PATH = MODELS_BASE_PATH / "bovw_index.faiss"
 
     # Batch size of MiniBatchKmeans (this value is only used when the dataset is
     # larger than the given number)
@@ -41,10 +41,10 @@ class Config:
     EXTENSIONS = ("*.jpg", "*.jpeg", "*.png")
 
     # Number of clusters to test from the valid range of clusters defined
-    NUM_CLUSTERS_TO_TEST = 1  # if 1, MIN_NUM_CLUSTERS_TO_TEST will be used
+    NUM_CLUSTERS_TO_TEST = 3  # if 1, MIN_NUM_CLUSTERS_TO_TEST will be used
     # Look for the best number of clusters between these ranges
-    MIN_NUM_CLUSTERS = 10  # 12 or 29 # minimum is 2
-    MAX_NUM_CLUSTERS = 1000
+    MIN_NUM_CLUSTERS = 20  # minimum is 2
+    MAX_NUM_CLUSTERS = 200
 
     # assert MIN_NUM_CLUSTERS <= MAX_NUM_CLUSTERS, "min n clusters <= max n clusters"
     # assert BATCH_SIZE >= MAX_NUM_CLUSTERS, "n_samples should be larger than max n_clusters"

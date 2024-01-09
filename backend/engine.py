@@ -22,6 +22,7 @@ from bag_of_visual_words import (
     load_cluster_model,
     extract_features,
 )
+from descriptors import Describer, CornerDescriptor
 
 app = Flask(__name__)
 CORS(app)
@@ -53,9 +54,6 @@ def run_image_query(image_features, n_images):
     return predictions
 
 
-
-
-
 @app.route("/similar_images", methods=["POST"])
 def predict():
     """ """
@@ -67,7 +65,9 @@ def predict():
     image = formdata_file_to_image(request.files["image"])
     image = resize(image, width=config.RESIZE_WIDTH)
     image = img_as_ubyte(image)
-    image_features = extract_features(image, clusterer, pipeline)
+    tmp_save_path = ".tmp.png"
+    cv2.imwrite(tmp_save_path, image)
+    image_features = extract_features(tmp_save_path, pipeline)
     predictions = run_image_query(image_features, config.NUM_IMAGES_TO_RETURN)
     end = time.time()
 
@@ -81,14 +81,23 @@ def predict():
 
 
 if __name__ == "__main__":
-    clusterer = load_cluster_model(config.BOVW_INDEX_PATH)
     pipeline = joblib.load(str(config.BOVW_PIPELINE_PATH))
-    bovw_histograms = np.load(str(config.BOVW_HISTOGRAMS_PATH))
 
-    d = bovw_histograms.shape[1]
-    index = faiss.IndexFlatL2(d)
-    index.add(bovw_histograms)  # add vectors to the index
+    n_clusters = pipeline.named_steps["bovw"].n_clusters
+
+    print(f"n_clusters: {n_clusters}")
+
+    # Load KMeans
+    clusterer = load_cluster_model(n_clusters, config.BOVW_KMEANS_INDEX_PATH)
+    pipeline.named_steps["bovw"].clusterer = clusterer
+
+    # Computer and/orload the BOVW corner descriptors
+    describer = Describer({"corners": CornerDescriptor(config.CORNER_DESCRIPTOR)})
+    pipeline.named_steps["bovw"].descriptions = None
+
+    # This index is no the clustere index
+    index = faiss.read_index(str(config.BOVW_INDEX_PATH))
     print(f"There are {index.ntotal} images in the index.")
-    images_paths = get_images_paths()
 
+    images_paths = get_images_paths()
     app.run(host="127.0.0.1", port=5000, debug=True)
