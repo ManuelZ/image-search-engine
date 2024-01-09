@@ -3,18 +3,27 @@ import base64
 import io
 from pathlib import Path
 
+# Standard Library imports
+import logging
+
 # External imports
 import numpy as np
 import cv2
+import faiss
 from PIL import Image
 import scipy.sparse as sp
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.feature_extraction.text import _document_frequency
 from sklearn.utils.validation import check_array, FLOAT_DTYPES
-import faiss
+from sklearn.metrics import silhouette_score
+from sklearn.metrics import davies_bouldin_score
+from sklearn.metrics import calinski_harabasz_score
 
 # Local imports
 from config import Config
+
+config = Config()
+rs = np.random.RandomState(42)
 
 
 def chunkIt(seq, num):
@@ -222,3 +231,70 @@ def get_images_paths() -> list[Path]:
 
     return images_paths
 
+
+def calc_sampled_cluster_score(
+    estimator,
+    X,
+    y=None,
+):
+    """
+    Calculate an evaluation score of this KMeans trained instance in a sample
+    of observations, multiple times.
+    It's neccesary to sample because otherwise the time it takes to compute the
+    whole dataset is huge.
+
+    For Silhouette:
+        The best value is 1 and the worst value is -1.
+        Values near 0 indicate overlapping clusters.
+        Negative values generally indicate that a sample has been assigned to the
+        wrong cluster, as a different cluster is more similar.
+
+    For Davie-Bouldin:
+        Zero is perfect.
+        This index signifies the average ‘similarity’ between clusters, where
+        the similarity is a measure that compares the distance between
+        clusters with the size of the clusters themselves.
+
+    For calinski-harabasz:
+        Higher is better.
+        The index is the ratio of the sum of between-clusters dispersion and
+        of inter-cluster dispersion for all clusters
+        (where dispersion is defined as the sum of distances squared).
+    """
+    scoring_func = davies_bouldin_score
+    # sign = 1 if greater_is_better else -1
+    # for davies_bouldin_score, the minimum score is zero,
+    # with lower values indicating better clustering.
+    sign = -1
+
+    bovw = estimator.named_steps["bovw"]
+    all_descriptions = np.concatenate(bovw.descriptions)
+
+    # Assign each description to a cluster
+    kmeans = bovw.clusterer
+    labels_ = kmeans.transform(all_descriptions).ravel()
+
+    dataset_size = all_descriptions.shape[0]
+    sample_size = np.min([dataset_size, config.CLUSTER_EVAL_SAMPLE_SIZE])
+    logging.info(
+        f"Calculating mean sampled (n={sample_size}) 'davies_bouldin_score' score..."
+    )
+
+    scores = []
+    for _ in range(config.CLUSTER_EVAL_N_SAMPLES):
+        sample_idxs = rs.choice(dataset_size, size=sample_size, replace=False)
+        X_sample = all_descriptions[sample_idxs]
+        labels_sample = labels_[sample_idxs]
+        scores.append(scoring_func(X_sample, labels_sample))
+
+    return sign * np.mean(scores)
+
+
+def create_search_index(data_array):
+    """ """
+
+    # TODO: use a better faiss index
+    index = faiss.IndexFlatL2(data_array.shape[1])
+    index.add(data_array)
+    print(f"There are {index.ntotal} images in the search index.")
+    return index

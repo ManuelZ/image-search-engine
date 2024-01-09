@@ -18,7 +18,7 @@ import faiss
 from config import Config
 from descriptors import CornerDescriptor
 from utils import get_image, get_images_paths
-from bag_of_visual_words import load_cluster_model, generate_bovw_feature
+from bag_of_visual_words import load_cluster_model
 from descriptors import Describer, CornerDescriptor
 
 app = Flask(__name__)
@@ -64,7 +64,7 @@ def predict():
     image = img_as_ubyte(image)
     tmp_save_path = ".tmp.png"
     cv2.imwrite(tmp_save_path, image)
-    image_features = generate_bovw_feature(tmp_save_path, pipeline)
+    image_features = pipeline.transform(np.array([tmp_save_path])).todense()
     predictions = run_image_query(image_features, config.NUM_IMAGES_TO_RETURN)
     end = time.time()
 
