@@ -21,7 +21,7 @@ import numpy.typing as npt
 from config import Config
 from utils import get_images_paths
 from bag_of_visual_words import (
-    generate_bovw_features_from_descriptions,
+    train_bovw_model,
 )
 from descriptors import Describer, CornerDescriptor, describe_dataset
 
@@ -42,7 +42,7 @@ def main(images_paths):
     ###########################################################################
     # Extract BOVW features
     ###########################################################################
-    generate_bovw_features_from_descriptions(images_paths, describer)
+    train_bovw_model(images_paths, describer)
 
 
 if __name__ == "__main__":

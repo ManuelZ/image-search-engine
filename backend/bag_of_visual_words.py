@@ -201,9 +201,7 @@ def generate_bovw_feature(image_path: Path, pipeline: Pipeline):
     return bovw_histogram
 
 
-def generate_bovw_features_from_descriptions(
-    images_paths: np.ndarray, describer: Describer
-):
+def train_bovw_model(images_paths: np.ndarray, describer: Describer):
     print(f"Received {images_paths.shape[0]} images to process")
 
     pipeline = Pipeline(
@@ -246,17 +244,23 @@ def generate_bovw_features_from_descriptions(
 
     bovw_histograms = best_pipeline.transform(images_paths).todense()
 
-    print(f"Preparing search index...")
-    # TODO: use a VPTree or a better faiss index
-    index = faiss.IndexFlatL2(bovw_histograms.shape[1])
-    index.add(bovw_histograms)
-    print(f"There are {index.ntotal} images in the index.")
+    index = create_search_index(bovw_histograms)
 
     save_indexes_and_pipeline(
         best_pipeline.named_steps["bovw"].clusterer.index,
         index,
         best_pipeline,
     )
+
+
+def create_search_index(bovw_histograms):
+    """ """
+
+    # TODO: use a better faiss index
+    index = faiss.IndexFlatL2(bovw_histograms.shape[1])
+    index.add(bovw_histograms)
+    print(f"There are {index.ntotal} images in the search index.")
+    return index
 
 
 def load_cluster_model(
