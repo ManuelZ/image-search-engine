@@ -309,35 +309,3 @@ class DHashDescriptor:
 class ColorMomentHashDescriptor:
     def describe(self, image):
         return np.array([cv2.img_hash.colorMomentHash(image)]).reshape(1, -1)
-
-
-def show_descriptors_on_image():
-    descriptor = CornerDescriptor("daisy")
-
-    image = cv2.imread("data/11aarne3p7L.jpg", cv2.IMREAD_UNCHANGED)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    image = skimage.transform.resize(
-        image=image,
-        output_shape=(config.RESIZE_WIDTH, config.RESIZE_WIDTH),
-        anti_aliasing=True,
-        mode="constant",
-        preserve_range=False,
-    )
-    image = img_as_ubyte(image)
-
-    descriptor = CornerDescriptor("daisy")
-    des, des_img = descriptor.describe(image)
-
-    fig, ax = plt.subplots()
-    ax.axis("off")
-    ax.imshow(des_img)
-    ax.set_title(f"{des.shape[0]} DAISY descriptors extracted:")
-    plt.show()
-
-
-DESCRIPTORS = {
-    # "hog" : HOGDescriptor(),
-    # "color" : ColorDescriptor(),
-    # "dhash" : DHashDescriptor(hash_size=8),
-    # "color_hash" : ColorMomentHashDescriptor()
-}

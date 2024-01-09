@@ -74,6 +74,24 @@ def run_clustering(
 
 
 class BOVW(BaseEstimator):
+    """
+    Bag of Visual Words modelling.
+
+    1) Each image is described by multiple feature vectors (corner descriptions).
+
+    2) Train a KMeans model to create a dictionary of visual words (visual vocabulary, codebook)
+       out of the given images' descriptions. Clustering aims to limit the infinite potential
+       points in space to a fixed number of clusters.
+
+    3) For each feature vector of an image, find the cluster index to which it belongs.
+
+    4) Create a histogram where the frequency of each cluster index is tracked.
+
+    The histogram is the final feature vector with which an image is described.
+
+    Note: The codebook, i.e. the cluster centers, are stored inside the clusterer object.
+    """
+
     def __init__(self, describer, n_clusters=10):
         self.describer: Describer = describer
         self.n_clusters: int = n_clusters
@@ -81,34 +99,36 @@ class BOVW(BaseEstimator):
 
     def fit(self, X: np.ndarray, y=None):
         """
-        X: file paths
+        Tran a KMeans model. Perform steps 1 and 2 of the explanation above.
+
+        Args:
+            X: file paths
         """
         self.descriptions = describe_dataset(self.describer, X)
         self.clusterer = run_clustering(self.descriptions, self.n_clusters)
         return self
 
     def transform(self, X: np.ndarray, y=None):
-        def clusterize_and_quantize(descriptions: list[np.ndarray]):
-            """
-            Create a dictionary of visual words (visual vocabulary, codebook) out of
-            the given descriptions. Instead of having an infinite number of possible
-            points in the space, reduce the possibilities to a certain fixed number of
-            clusters.
+        """
+        Perform steps 3 and 4 of the explanation above.
 
-            How to choose vocabulary size (number of clusters)?
-            - Too small: visual words not representative of all patches
-            - Too large: quantization artifacts, overfitting
+        Args:
+            X: file paths
 
-            """
+        """
 
-            clusters_histograms = np.zeros((len(descriptions), self.n_clusters))
-            for i, X in enumerate(descriptions):
+        def create_visual_word_histogram(images_descriptions: list[np.ndarray]):
+            """ """
+            clusters_histograms = np.zeros((len(images_descriptions), self.n_clusters))
+            for i, X in enumerate(images_descriptions):
+                # Quantization
                 clusters_indexes = self.clusterer.transform(X)
                 values, _ = np.histogram(clusters_indexes, bins=self.n_clusters)
                 clusters_histograms[i] = values
 
             return clusters_histograms
 
+        # TODO: Clean this up. This is a hacky way of doing things.
         if self.descriptions is None:
             descriptions = describe_dataset(self.describer, X, prediction=True)
         else:
@@ -118,11 +138,12 @@ class BOVW(BaseEstimator):
             descriptions_chunks = chunkIt(descriptions, config.N_JOBS)
             with parallel_config(backend="threading", n_jobs=config.N_JOBS):
                 list_of_histograms = Parallel()(
-                    delayed(clusterize_and_quantize)(des) for des in descriptions_chunks
+                    delayed(create_visual_word_histogram)(des)
+                    for des in descriptions_chunks
                 )
             clusters_histograms = np.concatenate(list_of_histograms)
         else:
-            clusters_histograms = clusterize_and_quantize(descriptions)
+            clusters_histograms = create_visual_word_histogram(descriptions)
 
         return clusters_histograms
 
@@ -190,12 +211,7 @@ def calc_sampled_cluster_score(
 
 
 def generate_bovw_feature(image_path: Path, pipeline: Pipeline):
-    """
-    Quantize the image descriptor.
-    Predict the closest cluster that each sample belongs to. Each value
-    returned by predict represents the index of the closest cluster
-    center in the code book.
-    """
+    """ """
 
     X = np.array([image_path])
     bovw_histogram = pipeline.transform(X).todense()
@@ -203,19 +219,10 @@ def generate_bovw_feature(image_path: Path, pipeline: Pipeline):
 
 
 def generate_bovw_features_from_descriptions(
-    images_paths: np.ndarray,
+    images_paths: np.ndarray, describer: Describer
 ):
     print(f"Received {images_paths.shape[0]} images to process")
 
-    ###########################################################################
-    # Image modeling
-    ###########################################################################
-    # Each image is modelled as a histogram which tracks the frequency of
-    # clusters (i.e. visual word, centroid).
-    # 1) For each feature vector of an image, find the cluster index to which it
-    #    belongs.
-    # 2) Create a histogram where the frequency of each cluster index is tracked
-    describer = Describer({"corners": CornerDescriptor(config.CORNER_DESCRIPTOR)})
     pipeline = Pipeline(
         [
             ("bovw", BOVW(describer)),
@@ -233,13 +240,11 @@ def generate_bovw_features_from_descriptions(
         .astype(int)
     )
 
-    parameter_grid = {
-        "bovw__n_clusters": clusters_to_test,  # e.g. [1, 10, 1000]
-    }
-
     search = GridSearchCV(
         estimator=pipeline,
-        param_grid=parameter_grid,
+        param_grid={
+            "bovw__n_clusters": clusters_to_test,  # e.g. [1, 10, 1000]
+        },
         n_jobs=config.N_JOBS,
         verbose=1,
         scoring=calc_sampled_cluster_score,
@@ -259,6 +264,7 @@ def generate_bovw_features_from_descriptions(
     bovw_histograms = best_pipeline.transform(images_paths).todense()
 
     print(f"Preparing search index...")
+    # TODO: use a VPTree or a better faiss index
     index = faiss.IndexFlatL2(bovw_histograms.shape[1])
     index.add(bovw_histograms)
     print(f"There are {index.ntotal} images in the index.")
@@ -268,12 +274,6 @@ def generate_bovw_features_from_descriptions(
         index,
         best_pipeline,
     )
-
-
-def extract_features(image_path: Path, pipeline: Pipeline):
-    """ """
-    bovw_histogram = generate_bovw_feature(image_path, pipeline)
-    return bovw_histogram
 
 
 def load_cluster_model(

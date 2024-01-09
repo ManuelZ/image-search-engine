@@ -42,7 +42,7 @@ def main(images_paths):
     ###########################################################################
     # Extract BOVW features
     ###########################################################################
-    generate_bovw_features_from_descriptions(images_paths)
+    generate_bovw_features_from_descriptions(images_paths, describer)
 
 
 if __name__ == "__main__":
