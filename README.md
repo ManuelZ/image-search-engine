@@ -24,4 +24,7 @@ python engine.py
 ```
 
 ### Methods
-Bag of visual words with BRISK descriptor and HSV color descriptor (the HSV color descriptor from [this Adrian's post](https://www.pyimagesearch.com/2014/12/01/complete-guide-building-image-search-engine-python-opencv/)).
+- Bag of Visual Words with Daisy corner descriptors, using the Faiss KMeans clusterer.
+- Faiss-based Flat Index for querying.
+
+Additional descriptors, such as the HSV color descriptor mentioned in [PyImagesearch](https://www.pyimagesearch.com/2014/12/01/complete-guide-building-image-search-engine-python-opencv), are prepared for integration but haven't been incorporated yet.
