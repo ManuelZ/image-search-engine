@@ -29,6 +29,22 @@ class SupportsDescribe(Protocol):
 config = Config()
 
 
+class DescriptorFactory:
+    def get_descriptor(
+        self, name
+    ) -> cv2.BRISK | cv2.SIFT | cv2.xfeatures2d.SURF | cv2.ORB:
+        if name == "brisk":
+            return cv2.BRISK.create(thresh=30)
+        elif name == "sift":
+            return cv2.SIFT.create(nfeatures=128)
+        elif name == "surf":
+            return cv2.xfeatures2d.SURF.create()
+        elif name == "orb":
+            return cv2.ORB.create(nfeatures=1024)
+        else:
+            raise Exception("Invalid descriptor name")
+
+
 class Describer:
     def __init__(self, descriptors: dict[str, SupportsDescribe]):
         self.descriptors = self.validate_descriptors(descriptors)
@@ -131,13 +147,7 @@ class CornerDescriptor:
 
     def __init__(self, name="sift"):
         self.name = name
-
-        if self.name == "brisk":
-            self.extractor = cv2.BRISK.create(thresh=30)
-
-        elif self.name == "sift":
-            # Creates an array of n_keypoints x nfeatures
-            self.extractor = cv2.SIFT.create(nfeatures=128)
+        self.factory = DescriptorFactory()
 
     def describe(self, image: np.ndarray) -> np.ndarray:
         """
@@ -153,8 +163,11 @@ class CornerDescriptor:
             image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
             image = img_as_ubyte(image)
 
-        if self.name in ["brisk", "sift"]:
-            kp, des = self.extractor.detectAndCompute(image, mask=None)
+        if self.name in ["brisk", "sift", "surf", "orb"]:
+            # I don't assign extractor to an attribute because Sift can't be seriallized,
+            # and that happens when doing Cross Validation with Scikit-Learn
+            extractor = self.factory.get_descriptor(self.name)
+            kp, des = extractor.detectAndCompute(image, mask=None)
 
         elif self.name == "daisy":
             des = feature.daisy(

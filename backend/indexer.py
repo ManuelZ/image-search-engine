@@ -36,7 +36,9 @@ def main(images_paths):
     images_paths = np.array(images_paths).reshape(-1, 1)
     descriptions = describe_dataset(describer, images_paths)
 
-    print(f"Length of descriptions: {len(descriptions)}")
+    print(
+        f"Mean number of descriptions per image: {np.mean([d.shape[0]  for d in descriptions[:100]])}"
+    )
 
     ###########################################################################
     # Extract BOVW features

@@ -55,4 +55,4 @@ class Config:
     # Number of times to repeat the sampling
     CLUSTER_EVAL_N_SAMPLES = 10
 
-    CORNER_DESCRIPTOR = "daisy"
+    CORNER_DESCRIPTOR = "orb"
