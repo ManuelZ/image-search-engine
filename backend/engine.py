@@ -81,20 +81,20 @@ if __name__ == "__main__":
     pipeline = joblib.load(str(config.BOVW_PIPELINE_PATH))
 
     n_clusters = pipeline.named_steps["bovw"].n_clusters
-
     print(f"n_clusters: {n_clusters}")
+
+    # Load images paths
+    images_paths = get_images_paths()
 
     # Load KMeans
     clusterer = load_cluster_model(n_clusters, config.BOVW_KMEANS_INDEX_PATH)
     pipeline.named_steps["bovw"].clusterer = clusterer
 
-    # Computer and/orload the BOVW corner descriptors
+    # Computer and/or load the BOVW corner descriptors
     describer = Describer({"corners": CornerDescriptor(config.CORNER_DESCRIPTOR)})
-    pipeline.named_steps["bovw"].descriptions = None
 
-    # This index is no the clustere index
+    # This index is no the clusterer index
     index = faiss.read_index(str(config.BOVW_INDEX_PATH))
     print(f"There are {index.ntotal} images in the index.")
 
-    images_paths = get_images_paths()
     app.run(host="127.0.0.1", port=5000, debug=True)

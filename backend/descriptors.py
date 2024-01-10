@@ -74,11 +74,8 @@ class Describer:
                     # Shape (n, 136), n depends on image size and other factors
                     description = descriptor.describe(image)
                     if description.ndim == 1:
-                        print(
-                            f"Description has a single dimension ({description.shape}, so it will be reshaped with `.reshape(1,-1)`)"
-                        )
                         description = description.reshape(1, -1)
-                    # Concatenate all descriptors
+                    # Concatenate all descriptions
                     extracted[d_name].append(description)
 
                 # Brisk sometimes may not find corners
@@ -108,7 +105,9 @@ def describe_dataset(
         descriptions = joblib.load(str(corner_descriptions_path))
 
     else:
-        print(f"Extracting features from dataset of {images_paths.shape[0]} images")
+        print(
+            f"Extracting features from {images_paths.shape[0]} images. Splitting in {paths_chunks} chunks."
+        )
         with parallel_config(backend="threading", n_jobs=n_jobs):
             list_of_dicts = Parallel()(
                 delayed(describer.describe)(paths, i, n_jobs > 1)
