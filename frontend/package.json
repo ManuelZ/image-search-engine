@@ -19,7 +19,7 @@
     "build": "npm-run-all build:css build:react",
     "build:css": "postcss src/css/tailwind.src.css -o src/css/tailwind.css --env production",
     "watch:css": "postcss src/css/tailwind.src.css -o src/css/tailwind.css -w",
-    "start:react": "react-scripts start",
+    "start:react": "set \"NODE_OPTIONS=--openssl-legacy-provider\" && react-scripts start",
     "build:react": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
