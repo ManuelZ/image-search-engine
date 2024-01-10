@@ -172,13 +172,14 @@ def train_bovw_model(images_paths: np.ndarray, describer: Describer):
     print(results_df)
 
     best_pipeline = search.best_estimator_
+    clusterer = best_pipeline.named_steps["bovw"].clusterer
 
     bovw_histograms = best_pipeline.transform(images_paths).todense()
 
     index = create_search_index(bovw_histograms)
 
     save_indexes_and_pipeline(
-        best_pipeline.named_steps["bovw"].clusterer.index,
+        clusterer.index,
         index,
         best_pipeline,
     )
@@ -207,4 +208,6 @@ def save_indexes_and_pipeline(kmeans_index, index, pipeline: Pipeline):
     print("Saving pipeline", pipeline)
     # Delete faiss kmeans because it can't be pickled
     pipeline.named_steps["bovw"].clusterer = None
+    # Delete the corner descriptions because they are not needed for prediction
+    pipeline.named_steps["bovw"].descriptions = None
     joblib.dump(pipeline, str(config.BOVW_PIPELINE_PATH), compress=3)

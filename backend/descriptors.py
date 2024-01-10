@@ -106,7 +106,7 @@ def describe_dataset(
 
     else:
         print(
-            f"Extracting features from {images_paths.shape[0]} images. Splitting in {paths_chunks} chunks."
+            f"Extracting features from {images_paths.shape[0]} images. Splitting in {len(paths_chunks)} chunks."
         )
         with parallel_config(backend="threading", n_jobs=n_jobs):
             list_of_dicts = Parallel()(
