@@ -8,7 +8,7 @@ class Config:
 
     N_JOBS = 4
 
-    DATA_FOLDER_PATH = Path(r"F:\DATASETS\102 Flowers dataset\102flowers\jpg")
+    DATA_FOLDER_PATH = FILL THIS PATH
 
     MODELS_BASE_PATH = Path("models")
     BOVW_CORNER_DESCRIPTIONS_PATH = MODELS_BASE_PATH / "bovw_corner_descriptions.joblib"

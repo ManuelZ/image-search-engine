@@ -4,7 +4,7 @@ User-interface and backend for finding images that look similar to an input quer
 
 ### Instructions
 
-Configure
+Configure the path towards the local images in `config.py`.
 
 To create a database of descriptors of the images in the input folder:
 ```
