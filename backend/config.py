@@ -6,7 +6,10 @@ import logging
 class Config:
     NUM_IMAGES_TO_RETURN = 10
 
-    N_JOBS = 4
+    # For n_jobs below -1, (n_cpus + 1 + n_jobs) are used
+    # 1: no parallel computing code is used at all
+    # -1: all cpus
+    N_JOBS = 1
 
     DATA_FOLDER_PATH = FILL THIS PATH
 
