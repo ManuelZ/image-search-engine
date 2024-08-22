@@ -56,7 +56,7 @@ function App() {
           id="file"
           name="file"
           className=""
-          accept=".jpg"
+          accept="image/*"
           onChange={(e) => handleFileChosen(e.target.files[0])}
         />
       </div>
