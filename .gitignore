@@ -2,3 +2,4 @@
 *.pyc
 *.joblib
 .vscode/*
+backend/models/*
