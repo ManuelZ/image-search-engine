@@ -1,143 +1,207 @@
 # Standard-Library imports
-import multiprocessing as mp
 from collections import defaultdict
 from typing import Protocol
 
 # External imports
-import cv2
 import numpy as np
-from tqdm import tqdm
+import cv2
+import torch
+import torchvision
+from torchvision.models.feature_extraction import create_feature_extractor
 from skimage import feature
-from skimage.util import img_as_ubyte
-from imutils import resize
-import skimage.transform
-import matplotlib.pyplot as plt
 import joblib
 from joblib import Parallel, delayed
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+from transformers import AutoImageProcessor, BitModel
+from tqdm import tqdm
 
 # Local imports
 from utils import dhash, chunkIt
 from config import Config
-from joblib import parallel_config
 
 
 class SupportsDescribe(Protocol):
-    def describe(self, image: np.ndarray) -> np.ndarray:
-        ...
+    def describe(self, image: np.ndarray) -> np.ndarray: ...
 
 
 config = Config()
 
 
-class DescriptorFactory:
-    def get_descriptor(
-        self, name
-    ) -> cv2.BRISK | cv2.SIFT | cv2.xfeatures2d.SURF | cv2.ORB:
+class CornerDescriptorFactory:
+    def get_descriptor(self, name) -> cv2.BRISK | cv2.SIFT | cv2.ORB:
         if name == "brisk":
             return cv2.BRISK.create(thresh=30)
         elif name == "sift":
             return cv2.SIFT.create(nfeatures=128)
-        elif name == "surf":
-            return cv2.xfeatures2d.SURF.create()
+        # elif name == "surf":
+        #    return cv2.xfeatures2d.SURF.create()
         elif name == "orb":
             return cv2.ORB.create(nfeatures=1024)
+        # elif name == "freak":
+        #     return cv2.xfeatures2d.FREAK.create()
         else:
             raise Exception("Invalid descriptor name")
 
 
 class Describer:
-    def __init__(self, descriptors: dict[str, SupportsDescribe]):
-        self.descriptors = self.validate_descriptors(descriptors)
+    """
+    To be able to extract features using multiple descriptors.
+    """
 
-    def validate_descriptors(
+    def __init__(self, descriptors: dict[str, SupportsDescribe]):
+        self.descriptors = self._validate_descriptors(descriptors)
+
+    def _validate_descriptors(
         self, descriptors: dict[str, SupportsDescribe]
     ) -> dict[str, SupportsDescribe]:
-        """
-        Validate that descriptors are provided.
-        """
-        if len(descriptors.items()) == 0:
+        """Validate that descriptors are provided."""
+        if not descriptors:
             raise Exception("No descriptors provided")
 
         return descriptors
 
-    def describe(
-        self, images_paths, n=1, multiprocess=False
-    ) -> dict[str, list[np.ndarray]]:
-        """
+    def read_image(self, path):
+        image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if image is None:
+            raise Exception("Problem opening image")
+        return image.astype(np.uint8)
 
-        Args:
-            images_paths:
-            n:
+    def describe(self, images_paths, multiprocess=False) -> dict[str, np.ndarray]:
+        """ """
 
-        Returns:
-
-        """
-        if len(self.descriptors.items()) == 0:
-            raise Exception("No descriptors provided")
-
-        extracted: dict[str, list[np.ndarray]] = defaultdict(list)
+        total_images = len(images_paths)
 
         if not multiprocess:
-            pbar = tqdm(total=len(images_paths))
+            pbar = tqdm(total=total_images)
 
+        descriptions: dict[str, list[np.ndarray]] = defaultdict(list)
         for img_path in images_paths.ravel().tolist():
-            image = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
-            image = resize(image, width=config.RESIZE_WIDTH)
-            image = img_as_ubyte(image)
 
-            for d_name, descriptor in self.descriptors.items():
-                try:
-                    # Shape (n, 136), n depends on image size and other factors
+            try:
+                image = self.read_image(img_path)
+                for d_name, descriptor in self.descriptors.items():
                     description = descriptor.describe(image)
+
+                    if description is None:
+                        raise Exception(f"Couldn't describe image '{img_path.name}'.")
+
                     if description.ndim == 1:
                         description = description.reshape(1, -1)
-                    # Concatenate all descriptions
-                    extracted[d_name].append(description)
 
-                # Brisk sometimes may not find corners
-                except Exception as e:
-                    print(f"Trouble describing image {img_path}\n {e}")
-                    continue
+                    descriptions[d_name].append(description)
+
+            except Exception as e:
+                print(f"ERROR: Problem describing image '{img_path}'\n '{e}'")
+                continue
 
             if not multiprocess:
                 pbar.update(1)
 
-        return extracted
+        return descriptions
 
 
-# TODO: currently it's used for extracting corners, make a different function for that and keep this general
 def describe_dataset(
     describer: Describer, images_paths: np.ndarray, prediction=False
-) -> list[np.ndarray]:
+) -> list[np.ndarray | torch.Tensor]:
     """ """
 
     n_jobs = 1 if prediction else config.N_JOBS
 
-    corner_descriptions_path = config.BOVW_CORNER_DESCRIPTIONS_PATH
-    paths_chunks = chunkIt(images_paths, n_jobs * 16)
+    # Load corner descriptions if they exist
+    if config.BOVW_CORNER_DESCRIPTIONS_PATH.exists() and not prediction:
+        print("Loading corner description features from local file.")
+        descriptions = joblib.load(str(config.BOVW_CORNER_DESCRIPTIONS_PATH))
 
-    if corner_descriptions_path.exists() and not prediction:
-        print("Loading dataset features from local file.")
-        descriptions = joblib.load(str(corner_descriptions_path))
+    else:  # Extract new features
+        paths_chunks = chunkIt(images_paths, n_jobs * 2)
 
-    else:
         print(
-            f"Extracting features from {images_paths.shape[0]} images. Splitting in {len(paths_chunks)} chunks."
+            "Extracting features from {} images. Splitting in {} jobs.".format(
+                images_paths.shape[0], len(paths_chunks)
+            )
         )
-        with parallel_config(backend="threading", n_jobs=n_jobs):
-            list_of_dicts = Parallel()(
-                delayed(describer.describe)(paths, i, n_jobs > 1)
-                for i, paths in enumerate(paths_chunks)
+
+        with Parallel(backend="threading", n_jobs=n_jobs) as parallel:
+            dicts = parallel(
+                delayed(describer.describe)(paths, n_jobs > 1)
+                for paths in tqdm(paths_chunks)
             )
 
+        print("Concatenating the results into a single array...")
         descriptions = []
-        for d in list_of_dicts:
-            descriptions.extend(d["corners"])
-
-        if not prediction:
-            joblib.dump(descriptions, str(corner_descriptions_path), compress=3)
+        for descriptions_dict in dicts:
+            for key in descriptions_dict.keys():
+                for image_description in descriptions_dict[key]:
+                    descriptions.append(image_description)
+        print("Results concatenated.")
 
     return descriptions
+
+
+class CNNDescriptor:
+    def __init__(self, model):
+        self.model = model
+        self.preprocessor = None
+        self.feature_extractor = None
+        self.initialize_model()
+
+    def initialize_model(self):
+        """ """
+
+        if self.model == config.DnnModels.RESNET:
+            self.preprocessor = A.Compose(
+                [
+                    A.Resize(config.RESIZE_SIZE, config.RESIZE_SIZE, cv2.INTER_LINEAR),
+                    A.Normalize(),
+                    ToTensorV2(),  # converts to PyTorch CHW format
+                ]
+            )
+
+            model = torchvision.models.resnet50(
+                weights=torchvision.models.ResNet50_Weights.IMAGENET1K_V2
+            )
+
+            # Check layers names with `dict(model.named_modules())`
+            self.feature_extractor = create_feature_extractor(
+                model, return_nodes={"flatten": "features"}
+            ).to(config.DEVICE)
+
+        elif self.model == config.DnnModels.BiT:
+            self.preprocessor = AutoImageProcessor.from_pretrained("google/bit-50")
+            self.feature_extractor = BitModel.from_pretrained("google/bit-50")
+
+        else:
+            raise ValueError(
+                f"Model '{self.model}' not recognized for feature extraction"
+            )
+
+        self.feature_extractor.eval()
+
+    def extract_features(self, image):
+        """ """
+
+        if self.model == config.DnnModels.RESNET:
+            image = self.preprocessor(image=image)["image"].to(config.DEVICE)
+            image = image.unsqueeze(0)  # Add batch dimension
+            features = self.feature_extractor(image)["features"]
+
+        elif self.model == config.DnnModels.BiT:
+            image = self.preprocessor(image, return_tensors="pt")
+            features = self.feature_extractor(**image).last_hidden_state
+
+        else:
+            raise Exception("Model not recognized")
+
+        return features.cpu().flatten()
+
+    def describe(self, image: np.ndarray):
+        """ """
+
+        with torch.no_grad():
+            features = self.extract_features(image)
+
+        return features
 
 
 class CornerDescriptor:
@@ -147,7 +211,7 @@ class CornerDescriptor:
 
     def __init__(self, name="sift"):
         self.name = name
-        self.factory = DescriptorFactory()
+        self.factory = CornerDescriptorFactory()
 
     def describe(self, image: np.ndarray) -> np.ndarray:
         """
@@ -158,16 +222,18 @@ class CornerDescriptor:
             depending on the number of keypoints detected)
         """
 
-        # Convert to grasycale
         if len(image.shape) == 3 and image.shape[2] == 3:
             image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            image = img_as_ubyte(image)
+            image = image.astype(np.uint8)
 
-        if self.name in ["brisk", "sift", "surf", "orb"]:
+        if self.name in ["brisk", "sift", "surf", "orb", "freak"]:
             # I don't assign extractor to an attribute because Sift can't be seriallized,
             # and that happens when doing Cross Validation with Scikit-Learn
             extractor = self.factory.get_descriptor(self.name)
-            kp, des = extractor.detectAndCompute(image, mask=None)
+            if self.name == "freak":
+                kp, des = extractor.compute(image, mask=None)
+            else:
+                kp, des = extractor.detectAndCompute(image, mask=None)
 
         elif self.name == "daisy":
             des = feature.daisy(

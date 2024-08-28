@@ -13,20 +13,18 @@ References:
 
 # Built-in imports
 from pathlib import Path
-from tempfile import mkdtemp
 
 # External imports
 import numpy as np
-
 from sklearn.pipeline import Pipeline
 import faiss
 import joblib
 from joblib import Parallel, delayed
 from joblib import parallel_config
-from sklearn.model_selection import RandomizedSearchCV
 from sklearn.model_selection import GridSearchCV
 from sklearn.base import BaseEstimator
 import pandas as pd
+from tqdm import tqdm
 
 # Local imports
 from utils import OkapiTransformer, calc_sampled_cluster_score, create_search_index
@@ -84,33 +82,37 @@ class BOVW(BaseEstimator):
 
         """
 
-        def create_visual_word_histogram(images_descriptions: list[np.ndarray]):
-            """ """
-            clusters_histograms = np.zeros((len(images_descriptions), self.n_clusters))
-            for i, X in enumerate(images_descriptions):
-                # Quantization
-                clusters_indexes = self.clusterer.transform(X)
-                values, _ = np.histogram(clusters_indexes, bins=self.n_clusters)
-                clusters_histograms[i] = values
+        ################################################################################################################
+        # Descriptions
+        ################################################################################################################
 
-            return clusters_histograms
-
-        # TODO: Clean this up. This is a hacky way of doing things.
         if self.descriptions is None:
             descriptions = describe_dataset(self.describer, X, prediction=True)
         else:
             descriptions = self.descriptions
 
+        ################################################################################################################
+        # Visual Words
+        ################################################################################################################
+
+        def create_visual_word_histogram(images_descriptions: list[np.ndarray]):
+            """ """
+            clusters_histograms = np.zeros((len(images_descriptions), self.n_clusters))
+            for i, X in enumerate(images_descriptions):
+                clusters_indexes = self.clusterer.transform(X)  # Quantization
+                values, _ = np.histogram(clusters_indexes, bins=self.n_clusters)
+                clusters_histograms[i] = values
+
+            return clusters_histograms
+
         descriptions_chunks = chunkIt(descriptions, config.N_JOBS)
         with parallel_config(backend="threading", n_jobs=config.N_JOBS):
             clusters_histograms = Parallel()(
                 delayed(create_visual_word_histogram)(des)
-                for des in descriptions_chunks
+                for des in tqdm(descriptions_chunks)
             )
 
-        if isinstance(clusters_histograms, list):
-            clusters_histograms = np.concatenate(clusters_histograms)
-
+        clusters_histograms = np.concatenate(clusters_histograms)
         return clusters_histograms
 
     def fit_transform(self, X: np.ndarray, y=None):
@@ -124,9 +126,11 @@ def run_clustering(
 ):
     """ """
 
+    print(f"Starting clustering...")
     descriptions_arr = np.concatenate(descriptions, axis=0)
     clusterer = FaissKMeans(n_clusters)
     clusterer.fit(descriptions_arr)
+    print(f"Clustering finished.")
     return clusterer
 
 
@@ -137,52 +141,67 @@ def train_bovw_model(images_paths: np.ndarray, describer: Describer):
 
     pipeline = Pipeline(
         [
-            ("bovw", BOVW(describer)),
+            ("bovw", BOVW(describer, n_clusters=config.NUM_CLUSTERS)),
             ("tfidf", OkapiTransformer()),
         ],
     )
 
-    clusters_to_test = np.unique(
-        np.linspace(
-            config.MIN_NUM_CLUSTERS,
-            config.MAX_NUM_CLUSTERS,
-            config.NUM_CLUSTERS_TO_TEST,
+    if config.BOVW_HYPERPARAMETERS_SEARCH:
+
+        clusters_to_test = np.unique(
+            np.linspace(
+                config.MIN_NUM_CLUSTERS,
+                config.MAX_NUM_CLUSTERS,
+                config.NUM_CLUSTERS_TO_TEST,
+            )
+            .round()
+            .astype(int)
         )
-        .round()
-        .astype(int)
-    )
 
-    search = GridSearchCV(
-        estimator=pipeline,
-        param_grid={
-            "bovw__n_clusters": clusters_to_test,  # e.g. [1, 10, 1000]
-        },
-        n_jobs=config.N_JOBS,
-        verbose=1,
-        scoring=calc_sampled_cluster_score,
-    )
+        search = GridSearchCV(
+            estimator=pipeline,
+            param_grid={
+                "bovw__n_clusters": clusters_to_test,  # e.g. [1, 10, 1000]
+            },
+            n_jobs=config.N_JOBS,
+            verbose=1,
+            scoring=calc_sampled_cluster_score,
+        )
 
-    search.fit(images_paths)
-    results_df = pd.DataFrame(search.cv_results_)
+        search.fit(images_paths)
+        results_df = pd.DataFrame(search.cv_results_)
 
-    print(f"Search finished.")
-    print(f"Best score: {search.best_score_:.3f}")
-    print(f"Best parameters: {search.best_params_}")
-    print(f"Detailed results:")
-    print(results_df)
+        print(f"Search finished.")
+        print(f"Best score: {search.best_score_:.3f}")
+        print(f"Best parameters: {search.best_params_}")
+        print(f"Detailed results:")
+        print(results_df)
 
-    best_pipeline = search.best_estimator_
-    clusterer = best_pipeline.named_steps["bovw"].clusterer
+        pipeline = search.best_estimator_
+        bovw_histograms = pipeline.transform(images_paths).todense()
+    else:
+        bovw_histograms = pipeline.fit_transform(images_paths).todense()
 
-    bovw_histograms = best_pipeline.transform(images_paths).todense()
+    clusterer = pipeline.named_steps["bovw"].clusterer
+    print("Saving KMeans index", clusterer.index)
+    faiss.write_index(clusterer.index, str(config.BOVW_KMEANS_INDEX_PATH))
 
+    # NOTE: Faiss works only with float32. There could be floating point precision issues!
+    bovw_histograms = bovw_histograms.astype(np.float32)
     index = create_search_index(bovw_histograms)
 
-    save_indexes_and_pipeline(
-        clusterer.index,
-        index,
-        best_pipeline,
-    )
+    print("Saving final index", index)
+    faiss.write_index(index, str(config.BOVW_INDEX_PATH))
+
+    print("Saving pipeline", pipeline)
+
+    # Delete faiss kmeans because it can't be pickled
+    pipeline.named_steps["bovw"].clusterer = None
+
+    # Delete the corner descriptions because they are not needed for prediction
+    pipeline.named_steps["bovw"].descriptions = None
+
+    joblib.dump(pipeline, str(config.BOVW_PIPELINE_PATH), compress=0)
 
 
 def load_cluster_model(
@@ -195,19 +214,3 @@ def load_cluster_model(
 
     clusterer = FaissKMeans(n_clusters=n_clusters, index=index)
     return clusterer
-
-
-def save_indexes_and_pipeline(kmeans_index, index, pipeline: Pipeline):
-    """"""
-    print("Saving KMeans index", kmeans_index)
-    faiss.write_index(kmeans_index, str(config.BOVW_KMEANS_INDEX_PATH))
-
-    print("Saving final index", index)
-    faiss.write_index(index, str(config.BOVW_INDEX_PATH))
-
-    print("Saving pipeline", pipeline)
-    # Delete faiss kmeans because it can't be pickled
-    pipeline.named_steps["bovw"].clusterer = None
-    # Delete the corner descriptions because they are not needed for prediction
-    pipeline.named_steps["bovw"].descriptions = None
-    joblib.dump(pipeline, str(config.BOVW_PIPELINE_PATH), compress=3)

@@ -290,11 +290,42 @@ def calc_sampled_cluster_score(
     return sign * np.mean(scores)
 
 
-def create_search_index(data_array):
+def create_search_index(data_array, index_type="cosine"):
     """ """
 
-    # TODO: use a better faiss index
-    index = faiss.IndexFlatL2(data_array.shape[1])
+    num_features = data_array.shape[1]
+
+    # Read this before creating flat indexes for low-dimensional data
+    # https://github.com/facebookresearch/faiss/issues/3245
+    if index_type == "cosine":
+        # https://github.com/facebookresearch/faiss/issues/95#issuecomment-297049159
+        index = faiss.IndexFlatIP(num_features)
+        faiss.normalize_L2(data_array)
+
+    elif index_type == "l2":
+        index = faiss.IndexFlatL2(num_features)
+        # faiss.normalize_L2(data_array)
+
+    # With 1K images, there is zero speed improvement,
+    # probably because making the inference takes more time than the actual search
+    elif index_type == "cell-probe":
+        # See the chapter about IndexIVFFlat for the setting of ncentroids.
+        ncentroids = 8
+
+        # The code_size, m, is typically a power of two between 4 and 64.
+        m = 16
+
+        # Like for IndexPQ, d should be a multiple of m.
+        d = num_features
+
+        coarse_quantizer = faiss.IndexFlatL2(d)
+
+        index = faiss.IndexIVFPQ(coarse_quantizer, d, ncentroids, m, 8)
+        index.nprobe = 5  # find n most similar clusters
+        index.train(data_array)
+
     index.add(data_array)
     print(f"There are {index.ntotal} images in the search index.")
+
     return index
+
