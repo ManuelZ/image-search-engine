@@ -18,7 +18,7 @@ from tqdm import tqdm
 
 # Local imports
 from utils import dhash, chunkIt
-from config import Config
+from config import Config, DnnModels
 
 
 class SupportsDescribe(Protocol):
@@ -149,7 +149,7 @@ class CNNDescriptor:
     def initialize_model(self):
         """ """
 
-        if self.model == config.DnnModels.RESNET:
+        if self.model == DnnModels.RESNET:
             self.preprocessor = A.Compose(
                 [
                     A.Resize(config.RESIZE_SIZE, config.RESIZE_SIZE, cv2.INTER_LINEAR),
@@ -167,7 +167,7 @@ class CNNDescriptor:
                 model, return_nodes={"flatten": "features"}
             ).to(config.DEVICE)
 
-        elif self.model == config.DnnModels.BiT:
+        elif self.model == DnnModels.BiT:
             self.preprocessor = AutoImageProcessor.from_pretrained("google/bit-50")
             self.feature_extractor = BitModel.from_pretrained("google/bit-50")
 
@@ -181,7 +181,7 @@ class CNNDescriptor:
     def extract_features(self, image):
         """ """
 
-        if self.model == config.DnnModels.RESNET:
+        if self.model == DnnModels.RESNET:
             image = self.preprocessor(image=image)["image"].to(config.DEVICE)
             image = image.unsqueeze(0)  # Add batch dimension
             features = self.feature_extractor(image)["features"]
