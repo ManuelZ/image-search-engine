@@ -3,3 +3,4 @@
 *.joblib
 .vscode/*
 backend/models/*
+backend/siamese_output
